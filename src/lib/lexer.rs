@@ -8,10 +8,16 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    pub fn new(input: &'a str) -> Self {
+        Self {
+            stream: input.chars().peekable(),
+        }
+    }
+
     fn lex(&mut self) -> Option<Token> {
         self.skip_whitespace()
             .skip_comment()
-            .get_identifier_token()
+            .or_else(|| self.get_identifier_token())
             .or_else(|| self.get_number_token())
             .or_else(|| self.get_kwd_token())
     }
@@ -27,17 +33,17 @@ impl<'a> Lexer<'a> {
         self
     }
 
-    fn skip_comment(&mut self) -> &mut Self {
+    fn skip_comment(&mut self) -> Option<Token> {
         if let Some('#') = self.stream.peek() {
-            self.stream.next();
-            while let Some(&ch) = self.stream.peek() {
-                if ch == 'n' {
+            while let Some(ch) = self.stream.next() {
+                if ch == '\n' {
                     break;
                 }
-                self.stream.next();
             }
+            self.lex()
+        } else {
+            None
         }
-        self
     }
 
     fn get_identifier_token(&mut self) -> Option<Token> {
@@ -102,4 +108,46 @@ impl<'a> Iterator for Lexer<'a> {
 
 fn is_float_digit(ch: char) -> bool {
     ch.is_ascii_digit() || ch == '.'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_simple_tokens_and_value() {
+        let mut lexer = Lexer::new("1 + 1 - foo");
+        assert_eq!(lexer.next().unwrap(), Token::Number(1.0));
+        assert_eq!(lexer.next().unwrap(), Token::Kwd('+'));
+        assert_eq!(lexer.next().unwrap(), Token::Number(1.0));
+        assert_eq!(lexer.next().unwrap(), Token::Kwd('-'));
+        assert_eq!(
+            lexer.next().unwrap(),
+            Token::Identifier(String::from("foo"))
+        );
+        assert_eq!(lexer.next(), None);
+    }
+    #[test]
+    fn test_simple_tokens_and_value_no_whitespace() {
+        let mut lexer = Lexer::new("1+1-foo");
+        assert_eq!(lexer.next().unwrap(), Token::Number(1.0));
+        assert_eq!(lexer.next().unwrap(), Token::Kwd('+'));
+        assert_eq!(lexer.next().unwrap(), Token::Number(1.0));
+        assert_eq!(lexer.next().unwrap(), Token::Kwd('-'));
+        assert_eq!(
+            lexer.next().unwrap(),
+            Token::Identifier(String::from("foo"))
+        );
+        assert_eq!(lexer.next(), None);
+    }
+    #[test]
+    fn test_comments() {
+        let code = "# This is a comment 1+1
+        1 + 2 # <- is code
+        # this is not";
+        let mut lexer = Lexer::new(code);
+        assert_eq!(lexer.next(), Some(Token::Number(1.0)));
+        assert_eq!(lexer.next(), Some(Token::Kwd('+')));
+        assert_eq!(lexer.next(), Some(Token::Number(2.0)));
+        assert_eq!(lexer.next(), None);
+    }
 }
