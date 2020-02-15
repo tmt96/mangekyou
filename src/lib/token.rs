@@ -1,10 +1,25 @@
 // Token Definition for Mangekyou
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     Def,
     Extern,
+    OpenParen,
+    CloseParen,
+    Comma,
+    Semicolon,
+    BinaryOp(BinaryOp),
     Identifier(String),
     Number(f64),
-    Kwd(char),
+    UnknownChar(char),
+}
+
+#[derive(Debug, PartialEq, Copy, Clone, Eq)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Lt,
+    Gt,
 }

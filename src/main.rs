@@ -1,8 +1,9 @@
 extern crate lib;
 
-use lib::lexer::Lexer;
+use lib::repl::*;
+use std::io::Result;
 
-fn main() {
-    let lexer = Lexer::new("Hello World!");
-    println!("{}", lexer.count());
+fn main() -> Result<()> {
+    run()?;
+    Ok(())
 }
