@@ -1,69 +1,61 @@
 use crate::token::*;
 use std::iter::Iterator;
-use std::iter::Peekable;
 use std::str::Chars;
 
 // Lexer/tokenizer implementation
 pub struct Lexer<'a> {
-    // TODO: use a separate char state instead of using peekable
-    stream: Peekable<Chars<'a>>,
+    stream: Chars<'a>,
+    cur_char: Option<char>,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
-        Self {
-            stream: input.chars().peekable(),
-        }
+        let mut stream = input.chars();
+        let cur_char = stream.next();
+        Self { stream, cur_char }
+    }
+
+    fn get_next_char(&mut self) -> Option<char> {
+        self.cur_char = self.stream.next();
+        self.cur_char
     }
 
     // TODO: use Result type instead of Option
     fn lex(&mut self) -> Option<Token> {
-        self.skip_whitespace()
-            .skip_comment()
-            .or_else(|| self.get_identifier_token())
-            .or_else(|| self.get_number_token())
-            .or_else(|| self.get_separator_token())
-            .or_else(|| self.get_binary_operator_token())
-            .or_else(|| self.get_unknown_char_token())
+        match self.cur_char? {
+            '#' => self.comment(),
+            ch if ch.is_whitespace() => self.whitespace(),
+            ch if ch.is_alphabetic() => self.get_identifier_token(ch),
+            ch if is_float_digit(ch) => self.get_number_token(ch),
+            ch => self.get_single_char_token(ch),
+        }
     }
 
-    fn skip_whitespace(&mut self) -> &mut Self {
-        while let Some(ch) = self.stream.peek() {
+    fn whitespace(&mut self) -> Option<Token> {
+        while let Some(ch) = self.get_next_char() {
             if !ch.is_whitespace() {
                 break;
             }
-            self.stream.next();
         }
-
-        self
+        self.lex()
     }
 
-    fn skip_comment(&mut self) -> Option<Token> {
-        if let Some('#') = self.stream.peek() {
-            while let Some(ch) = self.stream.next() {
-                if ch == '\n' {
-                    break;
-                }
+    fn comment(&mut self) -> Option<Token> {
+        while let Some(ch) = self.get_next_char() {
+            if ch == '\n' {
+                break;
             }
-            self.lex()
-        } else {
-            None
         }
+        self.lex()
     }
 
-    fn get_identifier_token(&mut self) -> Option<Token> {
-        let next_char = *self.stream.peek()?;
-        if !next_char.is_alphabetic() {
-            return None;
-        }
-        self.stream.next();
-
+    fn get_identifier_token(&mut self, first_char: char) -> Option<Token> {
         let mut identifier = String::new();
-        identifier.push(next_char);
-        while let Some(&ch) = self.stream.peek() {
+        identifier.push(first_char);
+
+        while let Some(ch) = self.get_next_char() {
             if ch.is_alphanumeric() {
                 identifier.push(ch);
-                self.stream.next();
             } else {
                 break;
             }
@@ -76,61 +68,37 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn get_number_token(&mut self) -> Option<Token> {
-        let next_char = *self.stream.peek()?;
-        if !is_float_digit(next_char) {
-            return None;
-        }
-        self.stream.next();
+    fn get_number_token(&mut self, first_char: char) -> Option<Token> {
+        let mut number = String::new();
+        number.push(first_char);
 
-        let mut identifier = String::new();
-        identifier.push(next_char);
-        while let Some(&ch) = self.stream.peek() {
+        while let Some(ch) = self.get_next_char() {
             if is_float_digit(ch) {
-                identifier.push(ch);
-                self.stream.next();
+                number.push(ch);
             } else {
                 break;
             }
         }
 
-        identifier.parse().ok().map(Token::Number)
+        number.parse().ok().map(Token::Number)
     }
 
-    fn get_unknown_char_token(&mut self) -> Option<Token> {
-        self.stream.next().map(Token::UnknownChar)
-    }
-
-    fn get_separator_token(&mut self) -> Option<Token> {
-        let token = match self.stream.peek() {
-            Some('(') => Some(Token::OpenParen),
-            Some(')') => Some(Token::CloseParen),
-            Some(',') => Some(Token::Comma),
-            Some(';') => Some(Token::Semicolon),
-            _ => None,
+    fn get_single_char_token(&mut self, ch: char) -> Option<Token> {
+        let token = match ch {
+            '(' => Token::OpenParen,
+            ')' => Token::CloseParen,
+            ',' => Token::Comma,
+            ';' => Token::Semicolon,
+            '+' => Token::BinaryOp(BinaryOp::Add),
+            '-' => Token::BinaryOp(BinaryOp::Sub),
+            '*' => Token::BinaryOp(BinaryOp::Mul),
+            '/' => Token::BinaryOp(BinaryOp::Div),
+            '<' => Token::BinaryOp(BinaryOp::Lt),
+            '>' => Token::BinaryOp(BinaryOp::Gt),
+            _ => Token::UnknownChar(ch),
         };
-
-        if token.is_some() {
-            self.stream.next();
-        }
-        token
-    }
-
-    fn get_binary_operator_token(&mut self) -> Option<Token> {
-        let operator = match self.stream.peek() {
-            Some('+') => Some(BinaryOp::Add),
-            Some('-') => Some(BinaryOp::Sub),
-            Some('*') => Some(BinaryOp::Mul),
-            Some('/') => Some(BinaryOp::Div),
-            Some('<') => Some(BinaryOp::Lt),
-            Some('>') => Some(BinaryOp::Gt),
-            _ => None,
-        };
-
-        if operator.is_some() {
-            self.stream.next();
-        }
-        operator.map(Token::BinaryOp)
+        self.get_next_char();
+        Some(token)
     }
 }
 
@@ -148,7 +116,6 @@ fn is_float_digit(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    // TODO: Fix tests!!
     use super::*;
     #[test]
     fn test_simple_tokens_and_value() {
