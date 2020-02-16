@@ -20,7 +20,6 @@ impl<'a> Lexer<'a> {
         self.cur_char
     }
 
-    // TODO: use Result type instead of Option
     fn lex(&mut self) -> Option<Token> {
         match self.cur_char? {
             '#' => self.comment(),

@@ -48,4 +48,5 @@ impl Function {
 pub enum AstNode {
     FunctionNode(Function),
     PrototypeNode(Prototype),
+    EmptyNode,
 }

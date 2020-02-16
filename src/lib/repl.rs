@@ -4,11 +4,11 @@ use std::io::{stdin, stdout, Result, Write};
 pub fn run() -> Result<()> {
     loop {
         let mut input = String::new();
-        print!("> ",);
+        print!("mangekyou>> ",);
         stdout().flush()?;
-        match stdin().read_line(&mut input) {
-            Ok(_) => (),
-            Err(_) => break,
+        if let Err(err) = stdin().read_line(&mut input) {
+            eprintln!("Error: {}", err);
+            continue;
         }
         if input.trim() == "" {
             continue;
@@ -18,8 +18,9 @@ pub fn run() -> Result<()> {
         }
 
         let mut parser = Parser::from_source(&input);
-        if let Some(node) = parser.parse() {
-            println!("AST Node {:?}", node);
+        match parser.parse_loop() {
+            Ok(tree) => println!("AST: {:?}", tree),
+            Err(message) => eprintln!("{}", message),
         }
     }
     Ok(())
