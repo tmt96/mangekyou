@@ -24,13 +24,10 @@ impl<'a> Parser<'a> {
         self.cur_token.clone()
     }
 
-    fn log_error(&self, message: &str) -> ParseResult<Expr> {
+    fn format_error<T>(&self, message: &str) -> ParseResult<T> {
         Err(format!("Parse Error: {}", message))
     }
 
-    fn log_prototype_error(&self, message: &str) -> ParseResult<Prototype> {
-        Err(format!("Parse Error: {}", message))
-    }
     fn parse_number(&mut self, number: f64) -> ParseResult<Expr> {
         self.get_next_token();
         Ok(Expr::Number(number))
@@ -43,7 +40,7 @@ impl<'a> Parser<'a> {
             self.get_next_token();
             Ok(expr)
         } else {
-            self.log_error("Expected ')'")
+            self.format_error("Expected ')'")
         }
     }
 
@@ -59,11 +56,11 @@ impl<'a> Parser<'a> {
                     Some(Token::Comma) => {
                         self.get_next_token();
                     }
-                    _ => return self.log_error("Expected ')' or ',' in argument list"),
+                    _ => return self.format_error("Expected ')' or ',' in argument list"),
                 }
             }
 
-            self.lexer.next(); // eat ')'
+            self.get_next_token(); // eat ')'
             Ok(Expr::Call {
                 callee: identifier,
                 args,
@@ -78,7 +75,7 @@ impl<'a> Parser<'a> {
             Some(Token::Number(num)) => self.parse_number(num),
             Some(Token::Identifier(ident)) => self.parse_identifier(ident),
             Some(Token::OpenParen) => self.parse_paren(),
-            _ => self.log_error("Unknown token when expecting an expression"),
+            _ => self.format_error("Unknown token when expecting an expression"),
         }
     }
 
@@ -129,11 +126,10 @@ impl<'a> Parser<'a> {
         let fn_name = if let Some(Token::Identifier(identifier)) = &mut self.cur_token {
             (*identifier).to_string()
         } else {
-            return self.log_prototype_error("Expected function name in prototype");
+            return self.format_error("Expected function name in prototype");
         };
 
-        self.get_next_token();
-        if let Some(Token::OpenParen) = self.cur_token {
+        if let Some(Token::OpenParen) = self.get_next_token() {
             let mut arg_names = Vec::new();
             while let Some(Token::Identifier(arg)) = self.get_next_token() {
                 arg_names.push(arg);
@@ -143,10 +139,10 @@ impl<'a> Parser<'a> {
                 self.get_next_token();
                 Ok(Prototype::new(fn_name, arg_names))
             } else {
-                self.log_prototype_error("Expected ')' in prototype")
+                self.format_error("Expected ')' in prototype")
             }
         } else {
-            self.log_prototype_error("Expected '(' in prototype")
+            self.format_error("Expected '(' in prototype")
         }
     }
 
@@ -190,5 +186,104 @@ impl<'a> Parser<'a> {
             }
             ast_tree.push(node);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_number_parsing() {
+        let mut parser = Parser::from_source("1");
+        let ast = parser.parse_expression().unwrap();
+        assert_eq!(ast, Expr::Number(1.0));
+        let mut parser = Parser::from_source("1234567890");
+        let ast = parser.parse_expression().unwrap();
+        assert_eq!(ast, Expr::Number(1234567890.0));
+        let mut parser = Parser::from_source("1.2345");
+        let ast = parser.parse_expression().unwrap();
+        assert_eq!(ast, Expr::Number(1.2345));
+        let mut parser = Parser::from_source("1.");
+        let ast = parser.parse_expression().unwrap();
+        assert_eq!(ast, Expr::Number(1.0));
+        let mut parser = Parser::from_source(".1");
+        let ast = parser.parse_expression().unwrap();
+        assert_eq!(ast, Expr::Number(0.1));
+    }
+
+    #[test]
+    fn test_basic_expression_parsing() {
+        let mut parser = Parser::from_source("1 + 1");
+        let ast = parser.parse_expression().unwrap();
+        assert_eq!(
+            ast,
+            Expr::Binary {
+                op: BinaryOp::Add,
+                lhs: Box::new(Expr::Number(1.0)),
+                rhs: Box::new(Expr::Number(1.0)),
+            }
+        )
+    }
+
+    #[test]
+    fn test_complicated_expression_parsing() {
+        let mut parser = Parser::from_source("1 + 2 * 3 - 2");
+        let got = parser.parse_expression().unwrap();
+        let expected = Expr::Binary {
+            op: BinaryOp::Sub,
+            lhs: Box::new(Expr::Binary {
+                op: BinaryOp::Add,
+                lhs: Box::new(Expr::Number(1.0)),
+                rhs: Box::new(Expr::Binary {
+                    op: BinaryOp::Mul,
+                    lhs: Box::new(Expr::Number(2.0)),
+                    rhs: Box::new(Expr::Number(3.0)),
+                }),
+            }),
+            rhs: Box::new(Expr::Number(2.0)),
+        };
+        assert_eq!(got, expected)
+    }
+
+    #[test]
+    fn test_prototype_parsing() {
+        let mut parser = Parser::from_source("foo()");
+        let got = parser.parse_prototype().unwrap();
+        let expected = Prototype::new(String::from("foo"), vec![]);
+        assert_eq!(got, expected);
+        let mut parser = Parser::from_source("bar(a)");
+        let got = parser.parse_prototype().unwrap();
+        let expected = Prototype::new(String::from("bar"), vec![String::from("a")]);
+        assert_eq!(got, expected);
+        let mut parser = Parser::from_source("bar(a b c)");
+        let got = parser.parse_prototype().unwrap();
+        let expected = Prototype::new(
+            String::from("bar"),
+            vec![String::from("a"), String::from("b"), String::from("c")],
+        );
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_function_definition_parsing() {
+        let mut parser = Parser::from_source("def foo() 1 + 1");
+        let got = parser.parse_definition().unwrap();
+        let expected = Function::new(
+            Prototype::new(String::from("foo"), vec![]),
+            Expr::Binary {
+                op: BinaryOp::Add,
+                lhs: Box::new(Expr::Number(1.0)),
+                rhs: Box::new(Expr::Number(1.0)),
+            },
+        );
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_extern_parsing() {
+        let mut parser = Parser::from_source("extern sin(a)");
+        let got = parser.parse_extern().unwrap();
+        let expected = Prototype::new(String::from("sin"), vec![String::from("a")]);
+        assert_eq!(got, expected);
     }
 }
