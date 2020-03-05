@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(ast, Expr::Number(1.0));
         let mut parser = Parser::from_source("1234567890");
         let ast = parser.parse_expression().unwrap();
-        assert_eq!(ast, Expr::Number(1234567890.0));
+        assert_eq!(ast, Expr::Number(1_234_567_890.0));
         let mut parser = Parser::from_source("1.2345");
         let ast = parser.parse_expression().unwrap();
         assert_eq!(ast, Expr::Number(1.2345));

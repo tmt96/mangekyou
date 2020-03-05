@@ -12,3 +12,4 @@ test = true
 doc = true
 
 [dependencies]
+inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "llvm8-0" }
