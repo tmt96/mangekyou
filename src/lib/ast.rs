@@ -18,8 +18,8 @@ pub enum Expr {
 
 #[derive(Debug, PartialEq)]
 pub struct Prototype {
-    name: String,
-    args: Vec<String>,
+    pub name: String,
+    pub args: Vec<String>,
 }
 
 impl Prototype {
@@ -34,8 +34,8 @@ impl Prototype {
 
 #[derive(Debug, PartialEq)]
 pub struct Function {
-    proto: Prototype,
-    body: Expr,
+    pub proto: Prototype,
+    pub body: Expr,
 }
 
 impl Function {

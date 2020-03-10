@@ -1,4 +1,5 @@
-use crate::parser::*;
+use crate::codegen::*;
+use inkwell::context::Context;
 use std::io::{stdin, stdout, Result, Write};
 
 pub fn run() -> Result<()> {
@@ -17,9 +18,11 @@ pub fn run() -> Result<()> {
             break;
         }
 
-        let mut parser = Parser::from_source(&input);
-        match parser.parse_loop() {
-            Ok(tree) => println!("AST: {:?}", tree),
+        let context = Context::create();
+
+        let mut generator = IRGenerator::from_source(&context, &input);
+        match generator.compile_loop() {
+            Ok(ir_values) => println!("IR: {:?}", ir_values),
             Err(message) => eprintln!("{}", message),
         }
     }
