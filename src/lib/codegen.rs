@@ -6,6 +6,7 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::{Linkage, Module},
+    passes::*,
     types::*,
     values::*,
     FloatPredicate,
@@ -17,6 +18,7 @@ pub struct IRGenerator<'ctx> {
     context: &'ctx Context,
     builder: Builder<'ctx>,
     module: Module<'ctx>,
+    pass_manager: PassManager<FunctionValue<'ctx>>,
     named_values: HashMap<String, BasicValueEnum<'ctx>>,
 }
 
@@ -25,11 +27,19 @@ impl<'ctx> IRGenerator<'ctx> {
         let builder = context.create_builder();
         let module = context.create_module("jit");
         let named_values = HashMap::new();
+
+        let pass_manager = PassManager::create(&module);
+        pass_manager.add_instruction_combining_pass();
+        pass_manager.add_reassociate_pass();
+        pass_manager.add_gvn_pass();
+        pass_manager.add_cfg_simplification_pass();
+
         Self {
             parser,
             context,
             builder,
             module,
+            pass_manager,
             named_values,
         }
     }
@@ -158,10 +168,6 @@ impl<'ctx> CodeGen<'ctx> for Function {
             .get_function(&self.proto.get_name())
             .unwrap_or(self.proto.codegen(generator)?);
 
-        // if !func_value.is_null() {
-        //     return Err("Function cannot be redefined.".to_string());
-        // }
-
         let block = generator.context.append_basic_block(func_value, "entry");
         generator.builder.position_at_end(&block);
 
@@ -177,6 +183,7 @@ impl<'ctx> CodeGen<'ctx> for Function {
             .build_return(Some(&body.as_basic_value_enum()?));
 
         if func_value.verify(true) {
+            generator.pass_manager.run_on(&func_value);
             Ok(func_value)
         } else {
             unsafe {

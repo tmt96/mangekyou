@@ -22,7 +22,7 @@ pub fn run() -> Result<()> {
 
         let mut generator = IRGenerator::from_source(&context, &input);
         match generator.compile_loop() {
-            Ok(ir_values) => println!("IR: {:?}", ir_values),
+            Ok(ir_values) => println!("IR: {:#?}", ir_values),
             Err(message) => eprintln!("{}", message),
         }
     }
