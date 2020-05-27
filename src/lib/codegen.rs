@@ -29,10 +29,15 @@ impl<'ctx> IRGenerator<'ctx> {
         let named_values = HashMap::new();
 
         let pass_manager = PassManager::create(&module);
+        // Do simple "peephole" optimizations and bit-twiddling optzns.
         pass_manager.add_instruction_combining_pass();
+        // Reassociate expressions.
         pass_manager.add_reassociate_pass();
+        // Eliminate Common SubExpressions.
         pass_manager.add_gvn_pass();
+        // Simplify the control flow graph (deleting unreachable blocks, etc).
         pass_manager.add_cfg_simplification_pass();
+        pass_manager.initialize();
 
         Self {
             parser,
@@ -135,6 +140,51 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     .build_call(callee_func, &args_list?, "calltmp")
                     .as_any_value_enum())
             }
+            Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                let zero_const = generator.context.f64_type().const_float(0.0);
+                let cond = cond.codegen(generator)?;
+                let cond = generator.builder.build_float_compare(
+                    FloatPredicate::ONE,
+                    cond.into_float_value(),
+                    zero_const,
+                    "ifcond",
+                );
+
+                let function = generator
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_parent()
+                    .unwrap();
+
+                let then_bb = generator.context.append_basic_block(function, "then");
+                let else_bb = generator.context.append_basic_block(function, "else");
+                let merge_bb = generator.context.append_basic_block(function, "ifcont");
+                generator
+                    .builder
+                    .build_conditional_branch(cond, then_bb, else_bb);
+
+                generator.builder.position_at_end(then_bb);
+                let then_value = then_branch.codegen(generator)?.as_basic_value_enum()?;
+                generator.builder.build_unconditional_branch(merge_bb);
+                let then_bb = generator.builder.get_insert_block().unwrap();
+
+                generator.builder.position_at_end(else_bb);
+                let else_value = else_branch.codegen(generator)?.as_basic_value_enum()?;
+                generator.builder.build_unconditional_branch(merge_bb);
+                let else_bb = generator.builder.get_insert_block().unwrap();
+
+                generator.builder.position_at_end(merge_bb);
+                let phi_value = generator
+                    .builder
+                    .build_phi(generator.context.f64_type(), "iftmp");
+                phi_value.add_incoming(&[(&then_value, then_bb), (&else_value, else_bb)]);
+                Ok(phi_value.as_any_value_enum())
+            }
         }
     }
 }
@@ -169,7 +219,7 @@ impl<'ctx> CodeGen<'ctx> for Function {
             .unwrap_or(self.proto.codegen(generator)?);
 
         let block = generator.context.append_basic_block(func_value, "entry");
-        generator.builder.position_at_end(&block);
+        generator.builder.position_at_end(block);
 
         generator.named_values = func_value
             .get_params()

@@ -70,11 +70,34 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_if_else(&mut self) -> ParseResult<Expr> {
+        self.get_next_token(); // eat "if"
+        let cond = self.parse_expression()?;
+        if let Some(Token::Then) = self.cur_token {
+            self.get_next_token();
+            let then_branch = self.parse_expression()?;
+            if let Some(Token::Else) = self.cur_token {
+                self.get_next_token();
+                let else_branch = self.parse_expression()?;
+                Ok(Expr::If {
+                    cond: Box::new(cond),
+                    then_branch: Box::new(then_branch),
+                    else_branch: Box::new(else_branch),
+                })
+            } else {
+                Err("Expected else".to_string())
+            }
+        } else {
+            Err("Expected then".to_string())
+        }
+    }
+
     fn parse_primary(&mut self) -> ParseResult<Expr> {
         match self.cur_token.clone() {
             Some(Token::Number(num)) => self.parse_number(num),
             Some(Token::Identifier(ident)) => self.parse_identifier(ident),
             Some(Token::OpenParen) => self.parse_paren(),
+            Some(Token::If) => self.parse_if_else(),
             _ => self.format_error("Unknown token when expecting an expression"),
         }
     }

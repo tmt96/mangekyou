@@ -14,6 +14,11 @@ pub enum Expr {
         callee: String,
         args: Vec<Expr>,
     },
+    If {
+        cond: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+    },
 }
 
 #[derive(Debug, PartialEq)]

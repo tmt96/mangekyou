@@ -63,6 +63,9 @@ impl<'a> Lexer<'a> {
         match identifier.as_ref() {
             "def" => Some(Token::Def),
             "extern" => Some(Token::Extern),
+            "if" => Some(Token::If),
+            "then" => Some(Token::Then),
+            "else" => Some(Token::Else),
             _ => Some(Token::Identifier(identifier)),
         }
     }

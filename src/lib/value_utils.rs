@@ -19,22 +19,10 @@ impl<'ctx> AnyValueExt<'ctx> for AnyValueEnum<'ctx> {
 }
 
 pub trait BasicValueExt {
-    fn set_name(&self, name: &str);
     fn get_name(&self) -> String;
 }
 
 impl BasicValueExt for BasicValueEnum<'_> {
-    fn set_name(&self, name: &str) {
-        match self {
-            BasicValueEnum::ArrayValue(val) => val.set_name(name),
-            BasicValueEnum::IntValue(val) => val.set_name(name),
-            BasicValueEnum::FloatValue(val) => val.set_name(name),
-            BasicValueEnum::PointerValue(val) => val.set_name(name),
-            BasicValueEnum::StructValue(val) => val.set_name(name),
-            BasicValueEnum::VectorValue(val) => val.set_name(name),
-        }
-    }
-
     fn get_name(&self) -> String {
         match self {
             BasicValueEnum::ArrayValue(val) => val.get_name().to_string_lossy().into_owned(),
