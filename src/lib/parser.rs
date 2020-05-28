@@ -61,10 +61,10 @@ impl<'a> Parser<'a> {
             }
 
             self.get_next_token(); // eat ')'
-            Ok(Expr::Call {
+            Ok(Expr::Call(CallExpr {
                 callee: identifier,
                 args,
-            })
+            }))
         } else {
             Ok(Expr::Variable(identifier))
         }
@@ -79,11 +79,11 @@ impl<'a> Parser<'a> {
             if let Some(Token::Else) = self.cur_token {
                 self.get_next_token();
                 let else_branch = self.parse_expression()?;
-                Ok(Expr::If {
+                Ok(Expr::If(IfExpr {
                     cond: Box::new(cond),
                     then_branch: Box::new(then_branch),
                     else_branch: Box::new(else_branch),
-                })
+                }))
             } else {
                 Err("Expected else".to_string())
             }
@@ -137,11 +137,11 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            lhs = Expr::Binary {
+            lhs = Expr::Binary(BinaryExpr {
                 op,
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
-            }
+            })
         }
     }
 
@@ -240,11 +240,11 @@ mod tests {
         let ast = parser.parse_expression().unwrap();
         assert_eq!(
             ast,
-            Expr::Binary {
+            Expr::Binary(BinaryExpr {
                 op: BinaryOp::Add,
                 lhs: Box::new(Expr::Number(1.0)),
                 rhs: Box::new(Expr::Number(1.0)),
-            }
+            })
         )
     }
 
@@ -252,19 +252,21 @@ mod tests {
     fn test_complicated_expression_parsing() {
         let mut parser = Parser::from_source("1 + 2 * 3 - 2");
         let got = parser.parse_expression().unwrap();
-        let expected = Expr::Binary {
+        let inner_rhs = Expr::Binary(BinaryExpr {
+            op: BinaryOp::Mul,
+            lhs: Box::new(Expr::Number(2.0)),
+            rhs: Box::new(Expr::Number(3.0)),
+        });
+        let lhs = Expr::Binary(BinaryExpr {
+            op: BinaryOp::Add,
+            lhs: Box::new(Expr::Number(1.0)),
+            rhs: Box::new(inner_rhs),
+        });
+        let expected = Expr::Binary(BinaryExpr {
             op: BinaryOp::Sub,
-            lhs: Box::new(Expr::Binary {
-                op: BinaryOp::Add,
-                lhs: Box::new(Expr::Number(1.0)),
-                rhs: Box::new(Expr::Binary {
-                    op: BinaryOp::Mul,
-                    lhs: Box::new(Expr::Number(2.0)),
-                    rhs: Box::new(Expr::Number(3.0)),
-                }),
-            }),
+            lhs: Box::new(lhs),
             rhs: Box::new(Expr::Number(2.0)),
-        };
+        });
         assert_eq!(got, expected)
     }
 
@@ -293,11 +295,11 @@ mod tests {
         let got = parser.parse_definition().unwrap();
         let expected = Function::new(
             Prototype::new(String::from("foo"), vec![]),
-            Expr::Binary {
+            Expr::Binary(BinaryExpr {
                 op: BinaryOp::Add,
                 lhs: Box::new(Expr::Number(1.0)),
                 rhs: Box::new(Expr::Number(1.0)),
-            },
+            }),
         );
         assert_eq!(got, expected);
     }

@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::parser::*;
-use crate::token::*;
+use crate::token::BinaryOp;
 use crate::value_utils::*;
 use inkwell::{
     builder::Builder,
@@ -68,34 +68,119 @@ impl<'ctx> IRGenerator<'ctx> {
             }
         }
     }
-
-    fn codegen_op(
-        &self,
-        op: BinaryOp,
-        lhs: FloatValue<'ctx>,
-        rhs: FloatValue<'ctx>,
-    ) -> AnyValueEnum<'ctx> {
-        match op {
-            BinaryOp::Add => self.builder.build_float_add(lhs, rhs, "addtmp").into(),
-            BinaryOp::Sub => self.builder.build_float_sub(lhs, rhs, "subrmp").into(),
-            BinaryOp::Mul => self.builder.build_float_mul(lhs, rhs, "multmp").into(),
-            BinaryOp::Div => self.builder.build_float_div(lhs, rhs, "divtmp").into(),
-            BinaryOp::Lt => self
-                .builder
-                .build_float_compare(FloatPredicate::ULT, lhs, rhs, "lttmp")
-                .into(),
-            BinaryOp::Gt => self
-                .builder
-                .build_float_compare(FloatPredicate::UGT, lhs, rhs, "gttmp")
-                .into(),
-        }
-    }
 }
 
 pub trait CodeGen<'ctx> {
     type GeneratedType;
 
     fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<Self::GeneratedType, String>;
+}
+
+impl<'ctx> CodeGen<'ctx> for BinaryExpr {
+    type GeneratedType = AnyValueEnum<'ctx>;
+
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<AnyValueEnum<'ctx>, String> {
+        let BinaryExpr { op, lhs, rhs } = self;
+        let lhs = lhs.codegen(generator)?;
+        let rhs = rhs.codegen(generator)?;
+        match (lhs, rhs) {
+            (AnyValueEnum::FloatValue(lhs), AnyValueEnum::FloatValue(rhs)) => {
+                let result = match op {
+                    BinaryOp::Add => generator.builder.build_float_add(lhs, rhs, "addtmp").into(),
+                    BinaryOp::Sub => generator.builder.build_float_sub(lhs, rhs, "subrmp").into(),
+                    BinaryOp::Mul => generator.builder.build_float_mul(lhs, rhs, "multmp").into(),
+                    BinaryOp::Div => generator.builder.build_float_div(lhs, rhs, "divtmp").into(),
+                    BinaryOp::Lt => generator
+                        .builder
+                        .build_float_compare(FloatPredicate::ULT, lhs, rhs, "lttmp")
+                        .into(),
+                    BinaryOp::Gt => generator
+                        .builder
+                        .build_float_compare(FloatPredicate::UGT, lhs, rhs, "gttmp")
+                        .into(),
+                };
+                Ok(result)
+            }
+            _ => Err(format!(
+                "Expected two number values, found {:?} and {:?}",
+                lhs, rhs
+            )),
+        }
+    }
+}
+
+impl<'ctx> CodeGen<'ctx> for CallExpr {
+    type GeneratedType = CallSiteValue<'ctx>;
+
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<Self::GeneratedType, String> {
+        let CallExpr { callee, args } = self;
+        let callee_func = generator
+            .module
+            .get_function(callee)
+            .ok_or_else(|| "Unknown function referenced".to_string())?;
+        if callee_func.count_params() as usize != args.len() {
+            return Err("Incorrect number of args passed".to_string());
+        }
+        let args_list: Result<Vec<_>, _> = args
+            .iter()
+            .map(|arg| arg.codegen(generator)?.as_basic_value_enum())
+            .collect();
+
+        Ok(generator
+            .builder
+            .build_call(callee_func, &args_list?, "calltmp"))
+    }
+}
+
+impl<'ctx> CodeGen<'ctx> for IfExpr {
+    type GeneratedType = PhiValue<'ctx>;
+
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<Self::GeneratedType, String> {
+        let IfExpr {
+            cond,
+            then_branch,
+            else_branch,
+        } = self;
+        let zero_const = generator.context.f64_type().const_float(0.0);
+        let cond = cond.codegen(generator)?;
+        let cond = generator.builder.build_float_compare(
+            FloatPredicate::ONE,
+            cond.into_float_value(),
+            zero_const,
+            "ifcond",
+        );
+
+        let function = generator
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_parent()
+            .unwrap();
+
+        let then_bb = generator.context.append_basic_block(function, "then");
+        let else_bb = generator.context.append_basic_block(function, "else");
+        let merge_bb = generator.context.append_basic_block(function, "ifcont");
+        generator
+            .builder
+            .build_conditional_branch(cond, then_bb, else_bb);
+
+        generator.builder.position_at_end(then_bb);
+        let then_value = then_branch.codegen(generator)?.as_basic_value_enum()?;
+        generator.builder.build_unconditional_branch(merge_bb);
+        let then_bb = generator.builder.get_insert_block().unwrap();
+
+        generator.builder.position_at_end(else_bb);
+        let else_value = else_branch.codegen(generator)?.as_basic_value_enum()?;
+        generator.builder.build_unconditional_branch(merge_bb);
+        let else_bb = generator.builder.get_insert_block().unwrap();
+
+        generator.builder.position_at_end(merge_bb);
+        let phi_value = generator
+            .builder
+            .build_phi(generator.context.f64_type(), "iftmp");
+        phi_value.add_incoming(&[(&then_value, then_bb), (&else_value, else_bb)]);
+        Ok(phi_value)
+    }
 }
 
 impl<'ctx> CodeGen<'ctx> for Expr {
@@ -109,82 +194,9 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 .get(name)
                 .map(|val| val.as_any_value_enum())
                 .ok_or_else(|| format! {"Value not found: {}", name}),
-            Expr::Binary { op, lhs, rhs } => {
-                let lhs = lhs.codegen(generator)?;
-                let rhs = rhs.codegen(generator)?;
-                match (lhs, rhs) {
-                    (AnyValueEnum::FloatValue(lhs), AnyValueEnum::FloatValue(rhs)) => {
-                        Ok(generator.codegen_op(*op, lhs, rhs))
-                    }
-                    _ => Err(format!(
-                        "Expected two number values, found {:?} and {:?}",
-                        lhs, rhs
-                    )),
-                }
-            }
-            Expr::Call { callee, args } => {
-                let callee_func = generator
-                    .module
-                    .get_function(callee)
-                    .ok_or_else(|| "Unknown function referenced".to_string())?;
-                if callee_func.count_params() as usize != args.len() {
-                    return Err("Incorrect number of args passed".to_string());
-                }
-                let args_list: Result<Vec<_>, _> = args
-                    .iter()
-                    .map(|arg| arg.codegen(generator)?.as_basic_value_enum())
-                    .collect();
-
-                Ok(generator
-                    .builder
-                    .build_call(callee_func, &args_list?, "calltmp")
-                    .as_any_value_enum())
-            }
-            Expr::If {
-                cond,
-                then_branch,
-                else_branch,
-            } => {
-                let zero_const = generator.context.f64_type().const_float(0.0);
-                let cond = cond.codegen(generator)?;
-                let cond = generator.builder.build_float_compare(
-                    FloatPredicate::ONE,
-                    cond.into_float_value(),
-                    zero_const,
-                    "ifcond",
-                );
-
-                let function = generator
-                    .builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_parent()
-                    .unwrap();
-
-                let then_bb = generator.context.append_basic_block(function, "then");
-                let else_bb = generator.context.append_basic_block(function, "else");
-                let merge_bb = generator.context.append_basic_block(function, "ifcont");
-                generator
-                    .builder
-                    .build_conditional_branch(cond, then_bb, else_bb);
-
-                generator.builder.position_at_end(then_bb);
-                let then_value = then_branch.codegen(generator)?.as_basic_value_enum()?;
-                generator.builder.build_unconditional_branch(merge_bb);
-                let then_bb = generator.builder.get_insert_block().unwrap();
-
-                generator.builder.position_at_end(else_bb);
-                let else_value = else_branch.codegen(generator)?.as_basic_value_enum()?;
-                generator.builder.build_unconditional_branch(merge_bb);
-                let else_bb = generator.builder.get_insert_block().unwrap();
-
-                generator.builder.position_at_end(merge_bb);
-                let phi_value = generator
-                    .builder
-                    .build_phi(generator.context.f64_type(), "iftmp");
-                phi_value.add_incoming(&[(&then_value, then_bb), (&else_value, else_bb)]);
-                Ok(phi_value.as_any_value_enum())
-            }
+            Expr::Binary(expr) => expr.codegen(generator),
+            Expr::Call(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
+            Expr::If(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
         }
     }
 }
