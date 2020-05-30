@@ -22,12 +22,22 @@ pub struct IfExpr {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct ForExpr {
+    pub var_name: String,
+    pub start: Box<Expr>,
+    pub end: Box<Expr>,
+    pub step: Option<Box<Expr>>,
+    pub body: Box<Expr>,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Expr {
     Number(f64),
     Variable(String),
     Binary(BinaryExpr),
     Call(CallExpr),
     If(IfExpr),
+    For(ForExpr),
 }
 
 #[derive(Debug, PartialEq)]

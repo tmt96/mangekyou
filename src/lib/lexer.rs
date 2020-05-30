@@ -66,6 +66,8 @@ impl<'a> Lexer<'a> {
             "if" => Some(Token::If),
             "then" => Some(Token::Then),
             "else" => Some(Token::Else),
+            "for" => Some(Token::For),
+            "in" => Some(Token::In),
             _ => Some(Token::Identifier(identifier)),
         }
     }
@@ -97,6 +99,10 @@ impl<'a> Lexer<'a> {
             '/' => Token::BinaryOp(BinaryOp::Div),
             '<' => Token::BinaryOp(BinaryOp::Lt),
             '>' => Token::BinaryOp(BinaryOp::Gt),
+            '=' => match self.get_next_char() {
+                Some('=') => Token::BinaryOp(BinaryOp::Eq),
+                _ => return Some(Token::Assign),
+            },
             _ => Token::UnknownChar(ch),
         };
         self.get_next_char();

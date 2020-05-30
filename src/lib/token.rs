@@ -11,6 +11,9 @@ pub enum Token {
     If,
     Then,
     Else,
+    For,
+    In,
+    Assign,
     BinaryOp(BinaryOp),
     Identifier(String),
     Number(f64),
@@ -25,4 +28,5 @@ pub enum BinaryOp {
     Div,
     Lt,
     Gt,
+    Eq,
 }

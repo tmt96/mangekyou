@@ -13,6 +13,8 @@ use inkwell::{
 };
 use std::collections::HashMap;
 
+type CodegenResult<T> = Result<T, String>;
+
 pub struct IRGenerator<'ctx> {
     parser: Parser<'ctx>,
     context: &'ctx Context,
@@ -53,11 +55,11 @@ impl<'ctx> IRGenerator<'ctx> {
         Self::from_parser(context, Parser::from_source(source))
     }
 
-    pub fn compile_single_inst(&mut self) -> Result<Option<AnyValueEnum<'ctx>>, String> {
+    pub fn compile_single_inst(&mut self) -> CodegenResult<Option<AnyValueEnum<'ctx>>> {
         self.parser.parse()?.codegen(self)
     }
 
-    pub fn compile_loop(&mut self) -> Result<Vec<AnyValueEnum<'ctx>>, String> {
+    pub fn compile_loop(&mut self) -> CodegenResult<Vec<AnyValueEnum<'ctx>>> {
         let mut val_vec = Vec::new();
         loop {
             let val = self.compile_single_inst()?;
@@ -73,13 +75,13 @@ impl<'ctx> IRGenerator<'ctx> {
 pub trait CodeGen<'ctx> {
     type GeneratedType;
 
-    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<Self::GeneratedType, String>;
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType>;
 }
 
 impl<'ctx> CodeGen<'ctx> for BinaryExpr {
     type GeneratedType = AnyValueEnum<'ctx>;
 
-    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<AnyValueEnum<'ctx>, String> {
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<AnyValueEnum<'ctx>> {
         let BinaryExpr { op, lhs, rhs } = self;
         let lhs = lhs.codegen(generator)?;
         let rhs = rhs.codegen(generator)?;
@@ -98,6 +100,10 @@ impl<'ctx> CodeGen<'ctx> for BinaryExpr {
                         .builder
                         .build_float_compare(FloatPredicate::UGT, lhs, rhs, "gttmp")
                         .into(),
+                    BinaryOp::Eq => generator
+                        .builder
+                        .build_float_compare(FloatPredicate::UEQ, lhs, rhs, "eqtmp")
+                        .into(),
                 };
                 Ok(result)
             }
@@ -112,7 +118,7 @@ impl<'ctx> CodeGen<'ctx> for BinaryExpr {
 impl<'ctx> CodeGen<'ctx> for CallExpr {
     type GeneratedType = CallSiteValue<'ctx>;
 
-    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<Self::GeneratedType, String> {
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
         let CallExpr { callee, args } = self;
         let callee_func = generator
             .module
@@ -135,7 +141,7 @@ impl<'ctx> CodeGen<'ctx> for CallExpr {
 impl<'ctx> CodeGen<'ctx> for IfExpr {
     type GeneratedType = PhiValue<'ctx>;
 
-    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<Self::GeneratedType, String> {
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
         let IfExpr {
             cond,
             then_branch,
@@ -183,10 +189,83 @@ impl<'ctx> CodeGen<'ctx> for IfExpr {
     }
 }
 
+impl<'ctx> CodeGen<'ctx> for ForExpr {
+    type GeneratedType = PhiValue<'ctx>;
+
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
+        let ForExpr {
+            var_name,
+            start,
+            end,
+            step,
+            body,
+        } = self;
+        let start_val = start.codegen(generator)?.as_basic_value_enum()?;
+        let function = generator
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_parent()
+            .unwrap();
+
+        let preheader_bb = generator.builder.get_insert_block().unwrap();
+
+        let loop_bb = generator.context.append_basic_block(function, "loop");
+        generator.builder.build_unconditional_branch(loop_bb);
+        generator.builder.position_at_end(loop_bb);
+
+        let variable = generator
+            .builder
+            .build_phi(generator.context.f64_type(), var_name);
+        variable.add_incoming(&[(&start_val, preheader_bb)]);
+
+        let old_value = generator
+            .named_values
+            .insert(var_name.to_owned(), variable.as_basic_value());
+
+        body.codegen(generator)?;
+        let step_value = match step {
+            Some(step) => step.codegen(generator)?,
+            None => generator.context.f64_type().const_float(1.0).into(),
+        };
+        let next_var = generator.builder.build_float_add(
+            variable.get_incoming(0).unwrap().0.into_float_value(),
+            step_value.into_float_value(),
+            "nextvar",
+        );
+
+        let end_cond = end.codegen(generator)?;
+        let end_cond = generator.builder.build_float_compare(
+            FloatPredicate::ONE,
+            end_cond.into_float_value(),
+            generator.context.f64_type().const_float(0.0),
+            "loopcond",
+        );
+        let loop_end_bb = generator.builder.get_insert_block().unwrap();
+        let after_bb = generator.context.append_basic_block(function, "afterloop");
+        generator
+            .builder
+            .build_conditional_branch(end_cond, loop_bb, after_bb);
+        generator.builder.position_at_end(after_bb);
+
+        variable.add_incoming(&[(&next_var, loop_end_bb)]);
+        match old_value {
+            Some(old_val) => {
+                generator.named_values.insert(var_name.to_owned(), old_val);
+            }
+            None => {
+                generator.named_values.remove(var_name);
+            }
+        }
+
+        Err("Unimplemented".to_string())
+    }
+}
+
 impl<'ctx> CodeGen<'ctx> for Expr {
     type GeneratedType = AnyValueEnum<'ctx>;
 
-    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<AnyValueEnum<'ctx>, String> {
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
         match self {
             Expr::Number(i) => Ok(generator.context.f64_type().const_float(*i).into()),
             Expr::Variable(name) => generator
@@ -197,6 +276,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
             Expr::Binary(expr) => expr.codegen(generator),
             Expr::Call(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
             Expr::If(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
+            Expr::For(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
         }
     }
 }
@@ -204,7 +284,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
 impl<'ctx> CodeGen<'ctx> for Prototype {
     type GeneratedType = FunctionValue<'ctx>;
 
-    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<FunctionValue<'ctx>, String> {
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<FunctionValue<'ctx>> {
         let Prototype { name, args } = self;
         let double_type = generator.context.f64_type();
         let arg_types = vec![double_type.as_basic_type_enum(); args.len()];
@@ -224,7 +304,7 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
 impl<'ctx> CodeGen<'ctx> for Function {
     type GeneratedType = FunctionValue<'ctx>;
 
-    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> Result<FunctionValue<'ctx>, String> {
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<FunctionValue<'ctx>> {
         let func_value = generator
             .module
             .get_function(&self.proto.get_name())
@@ -262,7 +342,7 @@ impl<'ctx> CodeGen<'ctx> for AstNode {
     fn codegen(
         &self,
         generator: &mut IRGenerator<'ctx>,
-    ) -> Result<Option<AnyValueEnum<'ctx>>, String> {
+    ) -> CodegenResult<Option<AnyValueEnum<'ctx>>> {
         match self {
             AstNode::FunctionNode(func) => func.codegen(generator).map(|val| Some(val.into())),
             AstNode::PrototypeNode(func) => func.codegen(generator).map(|val| Some(val.into())),

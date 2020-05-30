@@ -92,12 +92,57 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_for(&mut self) -> ParseResult<Expr> {
+        let var_name = match self.get_next_token() {
+            Some(Token::Identifier(name)) => name,
+            _ => return Err("Expected identifier after for".to_string()),
+        };
+
+        match self.get_next_token() {
+            Some(Token::Assign) => {}
+            _ => return Err("Exprected assignment".to_string()),
+        }
+
+        let start = self.parse_expression()?;
+        match self.cur_token {
+            Some(Token::Comma) => {
+                self.get_next_token();
+            }
+            _ => return Err("Expected ',' after for start value".to_string()),
+        }
+
+        let end = self.parse_expression()?;
+
+        let step = match self.cur_token {
+            Some(Token::Comma) => {
+                self.get_next_token();
+                Some(self.parse_expression()?)
+            }
+            _ => None,
+        };
+
+        if let Some(Token::In) = self.cur_token {
+            self.get_next_token();
+            let body = self.parse_expression()?;
+            Ok(Expr::For(ForExpr {
+                var_name,
+                start: Box::new(start),
+                end: Box::new(end),
+                step: step.map(Box::new),
+                body: Box::new(body),
+            }))
+        } else {
+            Err("Exprected 'in' after for expr".to_string())
+        }
+    }
+
     fn parse_primary(&mut self) -> ParseResult<Expr> {
         match self.cur_token.clone() {
             Some(Token::Number(num)) => self.parse_number(num),
             Some(Token::Identifier(ident)) => self.parse_identifier(ident),
             Some(Token::OpenParen) => self.parse_paren(),
             Some(Token::If) => self.parse_if_else(),
+            Some(Token::For) => self.parse_for(),
             _ => self.format_error("Unknown token when expecting an expression"),
         }
     }
@@ -109,7 +154,7 @@ impl<'a> Parser<'a> {
 
     fn get_token_precedent(token: BinaryOp) -> i32 {
         match token {
-            BinaryOp::Lt | BinaryOp::Gt => 10,
+            BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Eq => 10,
             BinaryOp::Add | BinaryOp::Sub => 20,
             BinaryOp::Mul | BinaryOp::Div => 40,
         }
