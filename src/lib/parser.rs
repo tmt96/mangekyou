@@ -99,7 +99,9 @@ impl<'a> Parser<'a> {
         };
 
         match self.get_next_token() {
-            Some(Token::Assign) => {}
+            Some(Token::Assign) => {
+                self.get_next_token();
+            }
             _ => return Err("Exprected assignment".to_string()),
         }
 
@@ -143,6 +145,7 @@ impl<'a> Parser<'a> {
             Some(Token::OpenParen) => self.parse_paren(),
             Some(Token::If) => self.parse_if_else(),
             Some(Token::For) => self.parse_for(),
+            None => self.format_error("No token left"),
             _ => self.format_error("Unknown token when expecting an expression"),
         }
     }
@@ -354,6 +357,43 @@ mod tests {
         let mut parser = Parser::from_source("extern sin(a)");
         let got = parser.parse_extern().unwrap();
         let expected = Prototype::new(String::from("sin"), vec![String::from("a")]);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_if_expr() {
+        let mut parser = Parser::from_source("if x < 3 then 1 else 2");
+        let got = parser.parse_expression().unwrap();
+        let expected = Expr::If(IfExpr {
+            cond: Box::new(Expr::Binary(BinaryExpr {
+                lhs: Box::new(Expr::Variable("x".to_string())),
+                op: BinaryOp::Lt,
+                rhs: Box::new(Expr::Number(3.0)),
+            })),
+            then_branch: Box::new(Expr::Number(1.0)),
+            else_branch: Box::new(Expr::Number(2.0)),
+        });
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn test_for_expr() {
+        let mut parser = Parser::from_source("for i = 1, i < 3, 1 in putchard(42)");
+        let got = parser.parse_expression().unwrap();
+        let expected = Expr::For(ForExpr {
+            var_name: "i".to_string(),
+            start: Box::new(Expr::Number(1.0)),
+            end: Box::new(Expr::Binary(BinaryExpr {
+                lhs: Box::new(Expr::Variable("x".to_string())),
+                op: BinaryOp::Lt,
+                rhs: Box::new(Expr::Number(3.0)),
+            })),
+            step: Some(Box::new(Expr::Number(1.0))),
+            body: Box::new(Expr::Call(CallExpr {
+                callee: "putchard".to_string(),
+                args: vec![Expr::Number(42.0)],
+            })),
+        });
         assert_eq!(got, expected);
     }
 }

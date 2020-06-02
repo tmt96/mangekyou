@@ -127,39 +127,94 @@ mod tests {
     use super::*;
     #[test]
     fn test_simple_tokens_and_value() {
-        let mut lexer = Lexer::new("1 + 1 - foo");
-        assert_eq!(lexer.next().unwrap(), Token::Number(1.0));
-        assert_eq!(lexer.next().unwrap(), Token::BinaryOp(BinaryOp::Add));
-        assert_eq!(lexer.next().unwrap(), Token::Number(1.0));
-        assert_eq!(lexer.next().unwrap(), Token::BinaryOp(BinaryOp::Sub));
-        assert_eq!(
-            lexer.next().unwrap(),
-            Token::Identifier(String::from("foo"))
-        );
-        assert_eq!(lexer.next(), None);
+        let lexer = Lexer::new("1 + 1 - foo");
+        assert!(lexer.eq(vec![
+            Token::Number(1.0),
+            Token::BinaryOp(BinaryOp::Add),
+            Token::Number(1.0),
+            Token::BinaryOp(BinaryOp::Sub),
+            Token::Identifier(String::from("foo")),
+        ]));
     }
+
     #[test]
     fn test_simple_tokens_and_value_no_whitespace() {
-        let mut lexer = Lexer::new("1+1-foo");
-        assert_eq!(lexer.next().unwrap(), Token::Number(1.0));
-        assert_eq!(lexer.next().unwrap(), Token::BinaryOp(BinaryOp::Add));
-        assert_eq!(lexer.next().unwrap(), Token::Number(1.0));
-        assert_eq!(lexer.next().unwrap(), Token::BinaryOp(BinaryOp::Sub));
-        assert_eq!(
-            lexer.next().unwrap(),
-            Token::Identifier(String::from("foo"))
-        );
-        assert_eq!(lexer.next(), None);
+        let lexer = Lexer::new("1+1-foo");
+        assert!(lexer.eq(vec![
+            Token::Number(1.0),
+            Token::BinaryOp(BinaryOp::Add),
+            Token::Number(1.0),
+            Token::BinaryOp(BinaryOp::Sub),
+            Token::Identifier(String::from("foo")),
+        ]));
     }
+
     #[test]
     fn test_comments() {
         let code = "# This is a comment 1+1
         1 + 2 # <- is code
         # this is not";
-        let mut lexer = Lexer::new(code);
-        assert_eq!(lexer.next(), Some(Token::Number(1.0)));
-        assert_eq!(lexer.next(), Some(Token::BinaryOp(BinaryOp::Add)));
-        assert_eq!(lexer.next(), Some(Token::Number(2.0)));
-        assert_eq!(lexer.next(), None);
+        let lexer = Lexer::new(code);
+        assert!(lexer.eq(vec![
+            Token::Number(1.0),
+            Token::BinaryOp(BinaryOp::Add),
+            Token::Number(2.0),
+        ]));
+    }
+
+    #[test]
+    fn test_if_else() {
+        let code = "if x < 3 then 1 else 2";
+        let lexer = Lexer::new(code);
+        assert!(lexer.eq(vec![
+            Token::If,
+            Token::Identifier("x".to_string()),
+            Token::BinaryOp(BinaryOp::Lt),
+            Token::Number(3.0),
+            Token::Then,
+            Token::Number(1.0),
+            Token::Else,
+            Token::Number(2.0)
+        ]));
+    }
+
+    #[test]
+    fn test_for_loop() {
+        let code = "for i = 1, i < n, 1 in putchard(42)";
+        let lexer = Lexer::new(code);
+        assert!(lexer.eq(vec![
+            Token::For,
+            Token::Identifier("i".to_string()),
+            Token::Assign,
+            Token::Number(1.0),
+            Token::Comma,
+            Token::Identifier("i".to_string()),
+            Token::BinaryOp(BinaryOp::Lt),
+            Token::Identifier("n".to_string()),
+            Token::Comma,
+            Token::Number(1.0),
+            Token::In,
+            Token::Identifier("putchard".to_string()),
+            Token::OpenParen,
+            Token::Number(42.0),
+            Token::CloseParen,
+        ]))
+    }
+
+    #[test]
+    fn test_def() {
+        let code = "def cmp(x y) x < y";
+        let lexer = Lexer::new(code);
+        assert!(lexer.eq(vec![
+            Token::Def,
+            Token::Identifier("cmp".to_string()),
+            Token::OpenParen,
+            Token::Identifier("x".to_string()),
+            Token::Identifier("y".to_string()),
+            Token::CloseParen,
+            Token::Identifier("x".to_string()),
+            Token::BinaryOp(BinaryOp::Lt),
+            Token::Identifier("y".to_string())
+        ]))
     }
 }
