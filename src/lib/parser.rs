@@ -146,7 +146,10 @@ impl<'a> Parser<'a> {
             Some(Token::If) => self.parse_if_else(),
             Some(Token::For) => self.parse_for(),
             None => self.format_error("No token left"),
-            _ => self.format_error("Unknown token when expecting an expression"),
+            Some(token) => self.format_error(&format!(
+                "Unknown token {:#?} when expecting an expression",
+                token
+            )),
         }
     }
 

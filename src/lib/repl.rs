@@ -3,6 +3,9 @@ use inkwell::context::Context;
 use std::io::{stdin, stdout, Result, Write};
 
 pub fn run() -> Result<()> {
+    let context = Context::create();
+
+    let mut generator = IRGenerator::new(&context);
     loop {
         let mut input = String::new();
         print!("mangekyou>> ",);
@@ -18,10 +21,7 @@ pub fn run() -> Result<()> {
             break;
         }
 
-        let context = Context::create();
-
-        let mut generator = IRGenerator::from_source(&context, &input);
-        match generator.compile_loop() {
+        match generator.compile(&input) {
             Ok(ir_values) => println!("IR: {:#?}", ir_values),
             Err(message) => eprintln!("{}", message),
         }

@@ -16,7 +16,6 @@ use std::collections::HashMap;
 type CodegenResult<T> = Result<T, String>;
 
 pub struct IRGenerator<'ctx> {
-    parser: Parser<'ctx>,
     context: &'ctx Context,
     builder: Builder<'ctx>,
     module: Module<'ctx>,
@@ -25,7 +24,7 @@ pub struct IRGenerator<'ctx> {
 }
 
 impl<'ctx> IRGenerator<'ctx> {
-    pub fn from_parser(context: &'ctx Context, parser: Parser<'ctx>) -> Self {
+    pub fn new(context: &'ctx Context) -> Self {
         let builder = context.create_builder();
         let module = context.create_module("jit");
         let named_values = HashMap::new();
@@ -42,7 +41,6 @@ impl<'ctx> IRGenerator<'ctx> {
         pass_manager.initialize();
 
         Self {
-            parser,
             context,
             builder,
             module,
@@ -51,24 +49,9 @@ impl<'ctx> IRGenerator<'ctx> {
         }
     }
 
-    pub fn from_source(context: &'ctx Context, source: &'ctx str) -> Self {
-        Self::from_parser(context, Parser::from_source(source))
-    }
-
-    pub fn compile_single_inst(&mut self) -> CodegenResult<Option<AnyValueEnum<'ctx>>> {
-        self.parser.parse()?.codegen(self)
-    }
-
-    pub fn compile_loop(&mut self) -> CodegenResult<Vec<AnyValueEnum<'ctx>>> {
-        let mut val_vec = Vec::new();
-        loop {
-            let val = self.compile_single_inst()?;
-            if let Some(val) = val {
-                val_vec.push(val);
-            } else {
-                return Ok(val_vec);
-            }
-        }
+    pub fn compile(&mut self, inst: &str) -> CodegenResult<Option<AnyValueEnum<'ctx>>> {
+        let mut parser = Parser::from_source(inst);
+        parser.parse()?.codegen(self)
     }
 }
 
@@ -79,31 +62,64 @@ pub trait CodeGen<'ctx> {
 }
 
 impl<'ctx> CodeGen<'ctx> for BinaryExpr {
-    type GeneratedType = AnyValueEnum<'ctx>;
+    type GeneratedType = FloatValue<'ctx>;
 
-    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<AnyValueEnum<'ctx>> {
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
         let BinaryExpr { op, lhs, rhs } = self;
         let lhs = lhs.codegen(generator)?;
         let rhs = rhs.codegen(generator)?;
         match (lhs, rhs) {
             (AnyValueEnum::FloatValue(lhs), AnyValueEnum::FloatValue(rhs)) => {
                 let result = match op {
-                    BinaryOp::Add => generator.builder.build_float_add(lhs, rhs, "addtmp").into(),
-                    BinaryOp::Sub => generator.builder.build_float_sub(lhs, rhs, "subrmp").into(),
-                    BinaryOp::Mul => generator.builder.build_float_mul(lhs, rhs, "multmp").into(),
+                    BinaryOp::Add => generator.builder.build_float_add(lhs, rhs, "addtmp"),
+                    BinaryOp::Sub => generator.builder.build_float_sub(lhs, rhs, "subrmp"),
+                    BinaryOp::Mul => generator.builder.build_float_mul(lhs, rhs, "multmp"),
                     BinaryOp::Div => generator.builder.build_float_div(lhs, rhs, "divtmp").into(),
-                    BinaryOp::Lt => generator
-                        .builder
-                        .build_float_compare(FloatPredicate::ULT, lhs, rhs, "lttmp")
-                        .into(),
-                    BinaryOp::Gt => generator
-                        .builder
-                        .build_float_compare(FloatPredicate::UGT, lhs, rhs, "gttmp")
-                        .into(),
-                    BinaryOp::Eq => generator
-                        .builder
-                        .build_float_compare(FloatPredicate::UEQ, lhs, rhs, "eqtmp")
-                        .into(),
+                    BinaryOp::Lt => {
+                        let tmp_value = generator.builder.build_float_compare(
+                            FloatPredicate::ULT,
+                            lhs,
+                            rhs,
+                            "lttmp",
+                        );
+                        generator.builder.build_unsigned_int_to_float(
+                            tmp_value,
+                            generator.context.f64_type(),
+                            "lttmp",
+                        )
+                    }
+                    BinaryOp::Gt => {
+                        let tmp_value = generator.builder.build_float_compare(
+                            FloatPredicate::UGT,
+                            lhs,
+                            rhs,
+                            "gttmp",
+                        );
+                        generator
+                            .builder
+                            .build_unsigned_int_to_float(
+                                tmp_value,
+                                generator.context.f64_type(),
+                                "gttmp",
+                            )
+                            .into()
+                    }
+                    BinaryOp::Eq => {
+                        let tmp_value = generator.builder.build_float_compare(
+                            FloatPredicate::UEQ,
+                            lhs,
+                            rhs,
+                            "eqtmp",
+                        );
+                        generator
+                            .builder
+                            .build_unsigned_int_to_float(
+                                tmp_value,
+                                generator.context.f64_type(),
+                                "eqtmp",
+                            )
+                            .into()
+                    }
                 };
                 Ok(result)
             }
@@ -257,8 +273,7 @@ impl<'ctx> CodeGen<'ctx> for ForExpr {
                 generator.named_values.remove(var_name);
             }
         }
-
-        Err("Unimplemented".to_string())
+        Ok(variable)
     }
 }
 
@@ -273,10 +288,10 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 .get(name)
                 .map(|val| val.as_any_value_enum())
                 .ok_or_else(|| format! {"Value not found: {}", name}),
-            Expr::Binary(expr) => expr.codegen(generator),
+            Expr::Binary(expr) => expr.codegen(generator).map(|val| val.into()),
             Expr::Call(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
-            Expr::If(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
-            Expr::For(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
+            Expr::If(expr) => expr.codegen(generator).map(|val| val.into()),
+            Expr::For(expr) => expr.codegen(generator).map(|val| val.into()),
         }
     }
 }
@@ -339,10 +354,7 @@ impl<'ctx> CodeGen<'ctx> for Function {
 impl<'ctx> CodeGen<'ctx> for AstNode {
     type GeneratedType = Option<AnyValueEnum<'ctx>>;
 
-    fn codegen(
-        &self,
-        generator: &mut IRGenerator<'ctx>,
-    ) -> CodegenResult<Option<AnyValueEnum<'ctx>>> {
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
         match self {
             AstNode::FunctionNode(func) => func.codegen(generator).map(|val| Some(val.into())),
             AstNode::PrototypeNode(func) => func.codegen(generator).map(|val| Some(val.into())),

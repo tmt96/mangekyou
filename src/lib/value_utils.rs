@@ -13,6 +13,7 @@ impl<'ctx> AnyValueExt<'ctx> for AnyValueEnum<'ctx> {
             AnyValueEnum::StructValue(val) => Ok(val.into()),
             AnyValueEnum::VectorValue(val) => Ok(val.into()),
             AnyValueEnum::PointerValue(val) => Ok(val.into()),
+            AnyValueEnum::PhiValue(val) => Ok(val.as_basic_value()),
             _ => Err(format!("Expected a basic value, found {:?}", self)),
         }
     }
