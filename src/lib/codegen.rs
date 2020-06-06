@@ -74,7 +74,7 @@ impl<'ctx> CodeGen<'ctx> for BinaryExpr {
                     BinaryOp::Add => generator.builder.build_float_add(lhs, rhs, "addtmp"),
                     BinaryOp::Sub => generator.builder.build_float_sub(lhs, rhs, "subrmp"),
                     BinaryOp::Mul => generator.builder.build_float_mul(lhs, rhs, "multmp"),
-                    BinaryOp::Div => generator.builder.build_float_div(lhs, rhs, "divtmp").into(),
+                    BinaryOp::Div => generator.builder.build_float_div(lhs, rhs, "divtmp"),
                     BinaryOp::Lt => {
                         let tmp_value = generator.builder.build_float_compare(
                             FloatPredicate::ULT,
@@ -95,14 +95,11 @@ impl<'ctx> CodeGen<'ctx> for BinaryExpr {
                             rhs,
                             "gttmp",
                         );
-                        generator
-                            .builder
-                            .build_unsigned_int_to_float(
-                                tmp_value,
-                                generator.context.f64_type(),
-                                "gttmp",
-                            )
-                            .into()
+                        generator.builder.build_unsigned_int_to_float(
+                            tmp_value,
+                            generator.context.f64_type(),
+                            "gttmp",
+                        )
                     }
                     BinaryOp::Eq => {
                         let tmp_value = generator.builder.build_float_compare(
@@ -111,14 +108,11 @@ impl<'ctx> CodeGen<'ctx> for BinaryExpr {
                             rhs,
                             "eqtmp",
                         );
-                        generator
-                            .builder
-                            .build_unsigned_int_to_float(
-                                tmp_value,
-                                generator.context.f64_type(),
-                                "eqtmp",
-                            )
-                            .into()
+                        generator.builder.build_unsigned_int_to_float(
+                            tmp_value,
+                            generator.context.f64_type(),
+                            "eqtmp",
+                        )
                     }
                 };
                 Ok(result)

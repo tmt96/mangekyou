@@ -250,17 +250,6 @@ impl<'a> Parser<'a> {
             _ => self.parse_top_level_expr().map(AstNode::FunctionNode),
         }
     }
-
-    pub fn parse_loop(&mut self) -> ParseResult<Vec<AstNode>> {
-        let mut ast_tree = vec![];
-        loop {
-            let node = self.parse()?;
-            if node == AstNode::EmptyNode {
-                return Ok(ast_tree);
-            }
-            ast_tree.push(node);
-        }
-    }
 }
 
 #[cfg(test)]
