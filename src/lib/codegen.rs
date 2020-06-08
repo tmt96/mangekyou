@@ -1,6 +1,5 @@
 use crate::ast::*;
 use crate::parser::*;
-use crate::token::BinaryOp;
 use crate::value_utils::*;
 use inkwell::{
     builder::Builder,
@@ -21,6 +20,7 @@ pub struct IRGenerator<'ctx> {
     module: Module<'ctx>,
     pass_manager: PassManager<FunctionValue<'ctx>>,
     named_values: HashMap<String, BasicValueEnum<'ctx>>,
+    op_precedence_map: HashMap<AstBinaryOp, i32>,
 }
 
 impl<'ctx> IRGenerator<'ctx> {
@@ -46,11 +46,27 @@ impl<'ctx> IRGenerator<'ctx> {
             module,
             pass_manager,
             named_values,
+            op_precedence_map: Self::init_op_pred_map(),
         }
     }
 
+    fn init_op_pred_map() -> HashMap<AstBinaryOp, i32> {
+        [
+            (AstBinaryOp::Lt, 10),
+            (AstBinaryOp::Gt, 10),
+            (AstBinaryOp::Eq, 10),
+            (AstBinaryOp::Add, 20),
+            (AstBinaryOp::Sub, 20),
+            (AstBinaryOp::Mul, 40),
+            (AstBinaryOp::Div, 40),
+        ]
+        .iter()
+        .cloned()
+        .collect()
+    }
+
     pub fn compile(&mut self, inst: &str) -> CodegenResult<Option<AnyValueEnum<'ctx>>> {
-        let mut parser = Parser::from_source(inst);
+        let mut parser = Parser::from_source(inst, &self.op_precedence_map);
         parser.parse()?.codegen(self)
     }
 }
@@ -62,7 +78,7 @@ pub trait CodeGen<'ctx> {
 }
 
 impl<'ctx> CodeGen<'ctx> for BinaryExpr {
-    type GeneratedType = FloatValue<'ctx>;
+    type GeneratedType = AnyValueEnum<'ctx>;
 
     fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
         let BinaryExpr { op, lhs, rhs } = self;
@@ -71,48 +87,75 @@ impl<'ctx> CodeGen<'ctx> for BinaryExpr {
         match (lhs, rhs) {
             (AnyValueEnum::FloatValue(lhs), AnyValueEnum::FloatValue(rhs)) => {
                 let result = match op {
-                    BinaryOp::Add => generator.builder.build_float_add(lhs, rhs, "addtmp"),
-                    BinaryOp::Sub => generator.builder.build_float_sub(lhs, rhs, "subrmp"),
-                    BinaryOp::Mul => generator.builder.build_float_mul(lhs, rhs, "multmp"),
-                    BinaryOp::Div => generator.builder.build_float_div(lhs, rhs, "divtmp"),
-                    BinaryOp::Lt => {
+                    AstBinaryOp::Add => {
+                        generator.builder.build_float_add(lhs, rhs, "addtmp").into()
+                    }
+                    AstBinaryOp::Sub => {
+                        generator.builder.build_float_sub(lhs, rhs, "subrmp").into()
+                    }
+                    AstBinaryOp::Mul => {
+                        generator.builder.build_float_mul(lhs, rhs, "multmp").into()
+                    }
+                    AstBinaryOp::Div => {
+                        generator.builder.build_float_div(lhs, rhs, "divtmp").into()
+                    }
+                    AstBinaryOp::Lt => {
                         let tmp_value = generator.builder.build_float_compare(
                             FloatPredicate::ULT,
                             lhs,
                             rhs,
                             "lttmp",
                         );
-                        generator.builder.build_unsigned_int_to_float(
-                            tmp_value,
-                            generator.context.f64_type(),
-                            "lttmp",
-                        )
+                        generator
+                            .builder
+                            .build_unsigned_int_to_float(
+                                tmp_value,
+                                generator.context.f64_type(),
+                                "lttmp",
+                            )
+                            .into()
                     }
-                    BinaryOp::Gt => {
+                    AstBinaryOp::Gt => {
                         let tmp_value = generator.builder.build_float_compare(
                             FloatPredicate::UGT,
                             lhs,
                             rhs,
                             "gttmp",
                         );
-                        generator.builder.build_unsigned_int_to_float(
-                            tmp_value,
-                            generator.context.f64_type(),
-                            "gttmp",
-                        )
+                        generator
+                            .builder
+                            .build_unsigned_int_to_float(
+                                tmp_value,
+                                generator.context.f64_type(),
+                                "gttmp",
+                            )
+                            .into()
                     }
-                    BinaryOp::Eq => {
+                    AstBinaryOp::Eq => {
                         let tmp_value = generator.builder.build_float_compare(
                             FloatPredicate::UEQ,
                             lhs,
                             rhs,
                             "eqtmp",
                         );
-                        generator.builder.build_unsigned_int_to_float(
-                            tmp_value,
-                            generator.context.f64_type(),
-                            "eqtmp",
-                        )
+                        generator
+                            .builder
+                            .build_unsigned_int_to_float(
+                                tmp_value,
+                                generator.context.f64_type(),
+                                "eqtmp",
+                            )
+                            .into()
+                    }
+                    AstBinaryOp::Custom(op) => {
+                        let func = generator
+                            .module
+                            .get_function(&format!("binary{}", op))
+                            .ok_or_else(|| "Binary operator not found".to_string())?;
+                        generator
+                            .builder
+                            .build_call(func, &[lhs.into(), rhs.into()], "binop")
+                            .as_any_value_enum()
                     }
                 };
                 Ok(result)
@@ -282,7 +325,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 .get(name)
                 .map(|val| val.as_any_value_enum())
                 .ok_or_else(|| format! {"Value not found: {}", name}),
-            Expr::Binary(expr) => expr.codegen(generator).map(|val| val.into()),
+            Expr::Binary(expr) => expr.codegen(generator),
             Expr::Call(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
             Expr::If(expr) => expr.codegen(generator).map(|val| val.into()),
             Expr::For(expr) => expr.codegen(generator).map(|val| val.into()),
@@ -294,9 +337,20 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
     type GeneratedType = FunctionValue<'ctx>;
 
     fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<FunctionValue<'ctx>> {
-        let Prototype { name, args } = self;
+        let Prototype {
+            name,
+            args,
+            prototype_type,
+            precedence,
+        } = self;
         let double_type = generator.context.f64_type();
         let arg_types = vec![double_type.as_basic_type_enum(); args.len()];
+        if let PrototypeType::Binary = prototype_type {
+            generator.op_precedence_map.insert(
+                AstBinaryOp::Custom(self.get_op_name()?),
+                precedence.unwrap_or(30),
+            );
+        }
 
         let fn_type = double_type.fn_type(&arg_types, false);
         let func = generator

@@ -14,6 +14,8 @@ pub enum Token {
     For,
     In,
     Assign,
+    BinaryDef,
+    UnaryDef,
     BinaryOp(BinaryOp),
     Identifier(String),
     Number(f64),

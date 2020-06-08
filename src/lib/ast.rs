@@ -1,9 +1,35 @@
 use crate::token::*;
 // AST definition
 
+#[derive(Debug, PartialEq, Copy, Clone, Eq, Hash)]
+pub enum AstBinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Lt,
+    Gt,
+    Eq,
+    Custom(char),
+}
+
+impl From<BinaryOp> for AstBinaryOp {
+    fn from(op: BinaryOp) -> Self {
+        match op {
+            BinaryOp::Add => AstBinaryOp::Add,
+            BinaryOp::Sub => AstBinaryOp::Sub,
+            BinaryOp::Mul => AstBinaryOp::Mul,
+            BinaryOp::Div => AstBinaryOp::Div,
+            BinaryOp::Lt => AstBinaryOp::Lt,
+            BinaryOp::Gt => AstBinaryOp::Gt,
+            BinaryOp::Eq => AstBinaryOp::Eq,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct BinaryExpr {
-    pub op: BinaryOp,
+    pub op: AstBinaryOp,
     pub lhs: Box<Expr>,
     pub rhs: Box<Expr>,
 }
@@ -41,18 +67,67 @@ pub enum Expr {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum PrototypeType {
+    Normal,
+    Unary,
+    Binary,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct Prototype {
     pub name: String,
     pub args: Vec<String>,
+    pub prototype_type: PrototypeType,
+    pub precedence: Option<i32>,
 }
 
 impl Prototype {
     pub fn new(name: String, args: Vec<String>) -> Self {
-        Self { name, args }
+        Self {
+            name,
+            args,
+            prototype_type: PrototypeType::Normal,
+            precedence: None,
+        }
+    }
+
+    pub fn prototype_type(self, prototype_type: PrototypeType) -> Self {
+        Self {
+            prototype_type,
+            ..self
+        }
+    }
+
+    pub fn precedence(self, precedence: Option<i32>) -> Self {
+        Self { precedence, ..self }
     }
 
     pub fn get_name(&self) -> String {
         self.name.to_string()
+    }
+
+    pub fn is_op(&self) -> bool {
+        self.is_binary_op() || self.is_unary_op()
+    }
+
+    pub fn is_unary_op(&self) -> bool {
+        self.prototype_type == PrototypeType::Unary
+    }
+
+    pub fn is_binary_op(&self) -> bool {
+        self.prototype_type == PrototypeType::Binary
+    }
+
+    pub fn get_op_name(&self) -> Result<char, &str> {
+        if self.is_op() {
+            self.name.chars().last().ok_or("Operator name is empty")
+        } else {
+            Err("Not an operator")
+        }
+    }
+
+    pub fn get_binary_pred(&self) -> Option<i32> {
+        self.precedence
     }
 }
 

@@ -68,6 +68,8 @@ impl<'a> Lexer<'a> {
             "else" => Some(Token::Else),
             "for" => Some(Token::For),
             "in" => Some(Token::In),
+            "binary" => Some(Token::BinaryDef),
+            "unary" => Some(Token::UnaryDef),
             _ => Some(Token::Identifier(identifier)),
         }
     }

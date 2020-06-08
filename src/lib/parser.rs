@@ -1,22 +1,31 @@
 use crate::ast::*;
 use crate::lexer::Lexer;
 use crate::token::*;
+use std::collections::HashMap;
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     cur_token: Option<Token>,
+    op_precedence_map: &'a HashMap<AstBinaryOp, i32>,
 }
 
 type ParseResult<T> = Result<T, String>;
 
 impl<'a> Parser<'a> {
-    pub fn from_source(source: &'a str) -> Self {
-        Self::from_lexer(Lexer::new(source))
+    pub fn from_source(source: &'a str, op_precedence_map: &'a HashMap<AstBinaryOp, i32>) -> Self {
+        Self::from_lexer(Lexer::new(source), op_precedence_map)
     }
 
-    pub fn from_lexer(mut lexer: Lexer<'a>) -> Self {
+    pub fn from_lexer(
+        mut lexer: Lexer<'a>,
+        op_precedence_map: &'a HashMap<AstBinaryOp, i32>,
+    ) -> Self {
         let cur_token = lexer.next();
-        Self { lexer, cur_token }
+        Self {
+            lexer,
+            cur_token,
+            op_precedence_map,
+        }
     }
 
     fn get_next_token(&mut self) -> Option<Token> {
@@ -95,14 +104,14 @@ impl<'a> Parser<'a> {
     fn parse_for(&mut self) -> ParseResult<Expr> {
         let var_name = match self.get_next_token() {
             Some(Token::Identifier(name)) => name,
-            _ => return Err("Expected identifier after for".to_string()),
+            _ => return self.format_error("Expected identifier after for"),
         };
 
         match self.get_next_token() {
             Some(Token::Assign) => {
                 self.get_next_token();
             }
-            _ => return Err("Exprected assignment".to_string()),
+            _ => return self.format_error("Exprected assignment"),
         }
 
         let start = self.parse_expression()?;
@@ -110,7 +119,7 @@ impl<'a> Parser<'a> {
             Some(Token::Comma) => {
                 self.get_next_token();
             }
-            _ => return Err("Expected ',' after for start value".to_string()),
+            _ => return self.format_error("Expected ',' after for start value"),
         }
 
         let end = self.parse_expression()?;
@@ -158,23 +167,21 @@ impl<'a> Parser<'a> {
         self.parse_bin_op_rhs(0, lhs)
     }
 
-    fn get_token_precedent(token: BinaryOp) -> i32 {
-        match token {
-            BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Eq => 10,
-            BinaryOp::Add | BinaryOp::Sub => 20,
-            BinaryOp::Mul | BinaryOp::Div => 40,
-        }
+    fn get_token_precedent(&self, token: AstBinaryOp) -> i32 {
+        *self.op_precedence_map.get(&token).unwrap_or(&100)
     }
 
     fn parse_bin_op_rhs(&mut self, expr_precedent: i32, mut lhs: Expr) -> ParseResult<Expr> {
         loop {
-            let op = if let Some(Token::BinaryOp(op)) = self.cur_token {
-                op
-            } else {
-                return Ok(lhs);
+            let op = match self.cur_token {
+                Some(Token::BinaryOp(op)) => op.into(),
+                Some(Token::UnknownChar(ch)) => AstBinaryOp::Custom(ch),
+                _ => {
+                    return Ok(lhs);
+                }
             };
 
-            let token_precedent = Self::get_token_precedent(op);
+            let token_precedent = self.get_token_precedent(op);
             if token_precedent < expr_precedent {
                 return Ok(lhs);
             }
@@ -182,7 +189,7 @@ impl<'a> Parser<'a> {
 
             let mut rhs = self.parse_primary()?;
             if let Some(Token::BinaryOp(next_op)) = self.cur_token {
-                let next_precedent = Self::get_token_precedent(next_op);
+                let next_precedent = self.get_token_precedent(next_op.into());
                 if token_precedent < next_precedent {
                     rhs = self.parse_bin_op_rhs(token_precedent + 1, rhs)?;
                 }
@@ -197,10 +204,36 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_prototype(&mut self) -> ParseResult<Prototype> {
-        let fn_name = if let Some(Token::Identifier(identifier)) = &mut self.cur_token {
-            (*identifier).to_string()
-        } else {
-            return self.format_error("Expected function name in prototype");
+        let cur_token = &self.cur_token;
+        let (prototype_type, fn_name, precedence) = match cur_token {
+            Some(Token::Identifier(identifier)) => {
+                (PrototypeType::Normal, identifier.to_string(), None)
+            }
+            Some(Token::BinaryDef) => match self.get_next_token() {
+                Some(Token::UnknownChar(ch)) => {
+                    if !ch.is_ascii() {
+                        return self.format_error("Expected binary operator");
+                    }
+                    let mut identifier = "binary".to_string();
+                    identifier.push(ch);
+
+                    let precedence = match self.get_next_token() {
+                        Some(Token::Number(n)) => {
+                            if n < 1.0 || n > 100.0 {
+                                return self.format_error("Invalid precedence: must be 1..100");
+                            }
+                            self.get_next_token();
+                            Some(n.round() as i32)
+                        }
+                        _ => None,
+                    };
+                    (PrototypeType::Binary, identifier, precedence)
+                }
+                _ => {
+                    return self.format_error("Expected binary operator");
+                }
+            },
+            _ => return self.format_error("Expected function name in prototype"),
         };
 
         if let Some(Token::OpenParen) = self.get_next_token() {
@@ -208,10 +241,15 @@ impl<'a> Parser<'a> {
             while let Some(Token::Identifier(arg)) = self.get_next_token() {
                 arg_names.push(arg);
             }
+            if prototype_type == PrototypeType::Binary && arg_names.len() != 2 {
+                return self.format_error("Binary operator requries exactly 2 operands");
+            }
 
             if let Some(Token::CloseParen) = self.cur_token {
                 self.get_next_token();
-                Ok(Prototype::new(fn_name, arg_names))
+                Ok(Prototype::new(fn_name, arg_names)
+                    .prototype_type(prototype_type)
+                    .precedence(precedence))
             } else {
                 self.format_error("Expected ')' in prototype")
             }
@@ -255,33 +293,51 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn init_op_pred_map() -> HashMap<AstBinaryOp, i32> {
+        [
+            (AstBinaryOp::Lt, 10),
+            (AstBinaryOp::Gt, 10),
+            (AstBinaryOp::Eq, 10),
+            (AstBinaryOp::Add, 20),
+            (AstBinaryOp::Sub, 20),
+            (AstBinaryOp::Mul, 40),
+            (AstBinaryOp::Div, 40),
+        ]
+        .iter()
+        .cloned()
+        .collect()
+    }
+
     #[test]
     fn test_number_parsing() {
-        let mut parser = Parser::from_source("1");
+        let op_pred_map = init_op_pred_map();
+        let mut parser = Parser::from_source("1", &op_pred_map);
         let ast = parser.parse_expression().unwrap();
         assert_eq!(ast, Expr::Number(1.0));
-        let mut parser = Parser::from_source("1234567890");
+        let mut parser = Parser::from_source("1234567890", &op_pred_map);
         let ast = parser.parse_expression().unwrap();
         assert_eq!(ast, Expr::Number(1_234_567_890.0));
-        let mut parser = Parser::from_source("1.2345");
+        let mut parser = Parser::from_source("1.2345", &op_pred_map);
         let ast = parser.parse_expression().unwrap();
         assert_eq!(ast, Expr::Number(1.2345));
-        let mut parser = Parser::from_source("1.");
+        let mut parser = Parser::from_source("1.", &op_pred_map);
         let ast = parser.parse_expression().unwrap();
         assert_eq!(ast, Expr::Number(1.0));
-        let mut parser = Parser::from_source(".1");
+        let mut parser = Parser::from_source(".1", &op_pred_map);
         let ast = parser.parse_expression().unwrap();
         assert_eq!(ast, Expr::Number(0.1));
     }
 
     #[test]
     fn test_basic_expression_parsing() {
-        let mut parser = Parser::from_source("1 + 1");
+        let op_pred_map = init_op_pred_map();
+        let mut parser = Parser::from_source("1 + 1", &op_pred_map);
         let ast = parser.parse_expression().unwrap();
         assert_eq!(
             ast,
             Expr::Binary(BinaryExpr {
-                op: BinaryOp::Add,
+                op: AstBinaryOp::Add,
                 lhs: Box::new(Expr::Number(1.0)),
                 rhs: Box::new(Expr::Number(1.0)),
             })
@@ -290,20 +346,21 @@ mod tests {
 
     #[test]
     fn test_complicated_expression_parsing() {
-        let mut parser = Parser::from_source("1 + 2 * 3 - 2");
+        let op_pred_map = init_op_pred_map();
+        let mut parser = Parser::from_source("1 + 2 * 3 - 2", &op_pred_map);
         let got = parser.parse_expression().unwrap();
         let inner_rhs = Expr::Binary(BinaryExpr {
-            op: BinaryOp::Mul,
+            op: AstBinaryOp::Mul,
             lhs: Box::new(Expr::Number(2.0)),
             rhs: Box::new(Expr::Number(3.0)),
         });
         let lhs = Expr::Binary(BinaryExpr {
-            op: BinaryOp::Add,
+            op: AstBinaryOp::Add,
             lhs: Box::new(Expr::Number(1.0)),
             rhs: Box::new(inner_rhs),
         });
         let expected = Expr::Binary(BinaryExpr {
-            op: BinaryOp::Sub,
+            op: AstBinaryOp::Sub,
             lhs: Box::new(lhs),
             rhs: Box::new(Expr::Number(2.0)),
         });
@@ -312,15 +369,16 @@ mod tests {
 
     #[test]
     fn test_prototype_parsing() {
-        let mut parser = Parser::from_source("foo()");
+        let op_pred_map = init_op_pred_map();
+        let mut parser = Parser::from_source("foo()", &op_pred_map);
         let got = parser.parse_prototype().unwrap();
         let expected = Prototype::new(String::from("foo"), vec![]);
         assert_eq!(got, expected);
-        let mut parser = Parser::from_source("bar(a)");
+        let mut parser = Parser::from_source("bar(a)", &op_pred_map);
         let got = parser.parse_prototype().unwrap();
         let expected = Prototype::new(String::from("bar"), vec![String::from("a")]);
         assert_eq!(got, expected);
-        let mut parser = Parser::from_source("bar(a b c)");
+        let mut parser = Parser::from_source("bar(a b c)", &op_pred_map);
         let got = parser.parse_prototype().unwrap();
         let expected = Prototype::new(
             String::from("bar"),
@@ -331,12 +389,13 @@ mod tests {
 
     #[test]
     fn test_function_definition_parsing() {
-        let mut parser = Parser::from_source("def foo() 1 + 1");
+        let op_pred_map = init_op_pred_map();
+        let mut parser = Parser::from_source("def foo() 1 + 1", &op_pred_map);
         let got = parser.parse_definition().unwrap();
         let expected = Function::new(
             Prototype::new(String::from("foo"), vec![]),
             Expr::Binary(BinaryExpr {
-                op: BinaryOp::Add,
+                op: AstBinaryOp::Add,
                 lhs: Box::new(Expr::Number(1.0)),
                 rhs: Box::new(Expr::Number(1.0)),
             }),
@@ -346,7 +405,8 @@ mod tests {
 
     #[test]
     fn test_extern_parsing() {
-        let mut parser = Parser::from_source("extern sin(a)");
+        let op_pred_map = init_op_pred_map();
+        let mut parser = Parser::from_source("extern sin(a)", &op_pred_map);
         let got = parser.parse_extern().unwrap();
         let expected = Prototype::new(String::from("sin"), vec![String::from("a")]);
         assert_eq!(got, expected);
@@ -354,12 +414,13 @@ mod tests {
 
     #[test]
     fn test_if_expr() {
-        let mut parser = Parser::from_source("if x < 3 then 1 else 2");
+        let op_pred_map = init_op_pred_map();
+        let mut parser = Parser::from_source("if x < 3 then 1 else 2", &op_pred_map);
         let got = parser.parse_expression().unwrap();
         let expected = Expr::If(IfExpr {
             cond: Box::new(Expr::Binary(BinaryExpr {
                 lhs: Box::new(Expr::Variable("x".to_string())),
-                op: BinaryOp::Lt,
+                op: AstBinaryOp::Lt,
                 rhs: Box::new(Expr::Number(3.0)),
             })),
             then_branch: Box::new(Expr::Number(1.0)),
@@ -370,14 +431,15 @@ mod tests {
 
     #[test]
     fn test_for_expr() {
-        let mut parser = Parser::from_source("for i = 1, i < 3, 1 in putchard(42)");
+        let op_pred_map = init_op_pred_map();
+        let mut parser = Parser::from_source("for i = 1, i < 3, 1 in putchard(42)", &op_pred_map);
         let got = parser.parse_expression().unwrap();
         let expected = Expr::For(ForExpr {
             var_name: "i".to_string(),
             start: Box::new(Expr::Number(1.0)),
             end: Box::new(Expr::Binary(BinaryExpr {
                 lhs: Box::new(Expr::Variable("x".to_string())),
-                op: BinaryOp::Lt,
+                op: AstBinaryOp::Lt,
                 rhs: Box::new(Expr::Number(3.0)),
             })),
             step: Some(Box::new(Expr::Number(1.0))),
