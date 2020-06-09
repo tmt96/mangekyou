@@ -35,6 +35,12 @@ pub struct BinaryExpr {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct UnaryExpr {
+    pub op: char,
+    pub operand: Box<Expr>,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct CallExpr {
     pub callee: String,
     pub args: Vec<Expr>,
@@ -60,6 +66,7 @@ pub struct ForExpr {
 pub enum Expr {
     Number(f64),
     Variable(String),
+    Unary(UnaryExpr),
     Binary(BinaryExpr),
     Call(CallExpr),
     If(IfExpr),
@@ -106,15 +113,15 @@ impl Prototype {
         self.name.to_string()
     }
 
-    pub fn is_op(&self) -> bool {
+    fn is_op(&self) -> bool {
         self.is_binary_op() || self.is_unary_op()
     }
 
-    pub fn is_unary_op(&self) -> bool {
+    fn is_unary_op(&self) -> bool {
         self.prototype_type == PrototypeType::Unary
     }
 
-    pub fn is_binary_op(&self) -> bool {
+    fn is_binary_op(&self) -> bool {
         self.prototype_type == PrototypeType::Binary
     }
 

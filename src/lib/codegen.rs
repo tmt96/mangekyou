@@ -168,6 +168,22 @@ impl<'ctx> CodeGen<'ctx> for BinaryExpr {
     }
 }
 
+impl<'ctx> CodeGen<'ctx> for UnaryExpr {
+    type GeneratedType = AnyValueEnum<'ctx>;
+
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
+        let op_value = self.operand.codegen(generator)?;
+        let func = generator
+            .module
+            .get_function(&format!("unary{}", self.op))
+            .ok_or_else(|| "Unary operator not found".to_string())?;
+        Ok(generator
+            .builder
+            .build_call(func, &[op_value.as_basic_value_enum()?], "unop")
+            .as_any_value_enum())
+    }
+}
+
 impl<'ctx> CodeGen<'ctx> for CallExpr {
     type GeneratedType = CallSiteValue<'ctx>;
 
@@ -326,6 +342,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 .map(|val| val.as_any_value_enum())
                 .ok_or_else(|| format! {"Value not found: {}", name}),
             Expr::Binary(expr) => expr.codegen(generator),
+            Expr::Unary(expr) => expr.codegen(generator),
             Expr::Call(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
             Expr::If(expr) => expr.codegen(generator).map(|val| val.into()),
             Expr::For(expr) => expr.codegen(generator).map(|val| val.into()),

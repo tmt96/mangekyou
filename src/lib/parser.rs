@@ -147,6 +147,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_unary(&mut self) -> ParseResult<Expr> {
+        match self.cur_token {
+            Some(Token::UnknownChar(ch)) => {
+                if ch.is_ascii() {
+                    self.parse_primary()
+                } else {
+                    self.get_next_token();
+                    Ok(Expr::Unary(UnaryExpr {
+                        op: ch,
+                        operand: Box::new(self.parse_unary()?),
+                    }))
+                }
+            }
+            _ => self.parse_primary(),
+        }
+    }
+
     fn parse_primary(&mut self) -> ParseResult<Expr> {
         match self.cur_token.clone() {
             Some(Token::Number(num)) => self.parse_number(num),
@@ -163,7 +180,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self) -> ParseResult<Expr> {
-        let lhs = self.parse_primary()?;
+        let lhs = self.parse_unary()?;
         self.parse_bin_op_rhs(0, lhs)
     }
 
@@ -187,7 +204,7 @@ impl<'a> Parser<'a> {
             }
             self.get_next_token();
 
-            let mut rhs = self.parse_primary()?;
+            let mut rhs = self.parse_unary()?;
             if let Some(Token::BinaryOp(next_op)) = self.cur_token {
                 let next_precedent = self.get_token_precedent(next_op.into());
                 if token_precedent < next_precedent {
@@ -217,15 +234,14 @@ impl<'a> Parser<'a> {
                     let mut identifier = "binary".to_string();
                     identifier.push(ch);
 
-                    let precedence = match self.get_next_token() {
-                        Some(Token::Number(n)) => {
-                            if n < 1.0 || n > 100.0 {
-                                return self.format_error("Invalid precedence: must be 1..100");
-                            }
-                            self.get_next_token();
-                            Some(n.round() as i32)
+                    let precedence = if let Some(Token::Number(n)) = self.get_next_token() {
+                        if n < 1.0 || n > 100.0 {
+                            return self.format_error("Invalid precedence: must be 1..100");
                         }
-                        _ => None,
+                        self.get_next_token();
+                        Some(n.round() as i32)
+                    } else {
+                        None
                     };
                     (PrototypeType::Binary, identifier, precedence)
                 }
@@ -233,6 +249,19 @@ impl<'a> Parser<'a> {
                     return self.format_error("Expected binary operator");
                 }
             },
+            Some(Token::UnaryDef) => {
+                if let Some(Token::UnknownChar(ch)) = self.get_next_token() {
+                    if !ch.is_ascii() {
+                        return self.format_error("Expected unary operator");
+                    }
+                    let mut identifier = "binary".to_string();
+                    identifier.push(ch);
+                    self.get_next_token();
+                    (PrototypeType::Unary, identifier, None)
+                } else {
+                    return self.format_error("Expected unary operator");
+                }
+            }
             _ => return self.format_error("Expected function name in prototype"),
         };
 
