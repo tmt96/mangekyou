@@ -215,10 +215,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_prototype(&mut self) -> ParseResult<Prototype> {
-        let cur_token = &self.cur_token;
+        let cur_token = self.cur_token.clone();
         let (prototype_type, fn_name, precedence) = match cur_token {
             Some(Token::Identifier(identifier)) => {
-                (PrototypeType::Normal, identifier.to_string(), None)
+                self.get_next_token();
+                (PrototypeType::Normal, identifier, None)
             }
             Some(Token::BinaryDef) => match self.get_next_token() {
                 Some(Token::UnknownChar(ch)) => {
@@ -259,7 +260,7 @@ impl<'a> Parser<'a> {
             _ => return self.format_error("Expected function name in prototype"),
         };
 
-        if let Some(Token::OpenParen) = self.get_next_token() {
+        if let Some(Token::OpenParen) = self.cur_token {
             let mut arg_names = Vec::new();
             while let Some(Token::Identifier(arg)) = self.get_next_token() {
                 arg_names.push(arg);

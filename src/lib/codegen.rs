@@ -19,7 +19,7 @@ pub struct IRGenerator<'ctx> {
     builder: Builder<'ctx>,
     module: Module<'ctx>,
     pass_manager: PassManager<FunctionValue<'ctx>>,
-    named_values: HashMap<String, BasicValueEnum<'ctx>>,
+    named_values: HashMap<String, PointerValue<'ctx>>,
     op_precedence_map: HashMap<AstBinaryOp, i32>,
 }
 
@@ -30,6 +30,8 @@ impl<'ctx> IRGenerator<'ctx> {
         let named_values = HashMap::new();
 
         let pass_manager = PassManager::create(&module);
+        // Promote pointer values to register
+        pass_manager.add_promote_memory_to_register_pass();
         // Do simple "peephole" optimizations and bit-twiddling optzns.
         pass_manager.add_instruction_combining_pass();
         // Reassociate expressions.
@@ -68,6 +70,20 @@ impl<'ctx> IRGenerator<'ctx> {
     pub fn compile(&mut self, inst: &str) -> CodegenResult<Option<AnyValueEnum<'ctx>>> {
         let mut parser = Parser::from_source(inst, &self.op_precedence_map);
         parser.parse()?.codegen(self)
+    }
+
+    fn create_entry_block_alloca(
+        &self,
+        func: FunctionValue<'ctx>,
+        var_name: &str,
+    ) -> PointerValue<'ctx> {
+        let builder = self.context.create_builder();
+        let entry = func.get_first_basic_block().unwrap();
+        match entry.get_first_instruction() {
+            Some(inst) => builder.position_before(&inst),
+            None => builder.position_at_end(entry),
+        }
+        builder.build_alloca(self.context.f64_type(), var_name)
     }
 }
 
@@ -250,7 +266,7 @@ impl<'ctx> CodeGen<'ctx> for IfExpr {
 }
 
 impl<'ctx> CodeGen<'ctx> for ForExpr {
-    type GeneratedType = PhiValue<'ctx>;
+    type GeneratedType = AnyValueEnum<'ctx>;
 
     fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
         let ForExpr {
@@ -268,31 +284,27 @@ impl<'ctx> CodeGen<'ctx> for ForExpr {
             .get_parent()
             .unwrap();
 
-        let preheader_bb = generator.builder.get_insert_block().unwrap();
-
         let loop_bb = generator.context.append_basic_block(function, "loop");
         generator.builder.build_unconditional_branch(loop_bb);
         generator.builder.position_at_end(loop_bb);
 
-        let variable = generator
-            .builder
-            .build_phi(generator.context.f64_type(), var_name);
-        variable.add_incoming(&[(&start_val, preheader_bb)]);
+        let variable = generator.create_entry_block_alloca(function, var_name);
+        generator.builder.build_store(variable, start_val);
 
-        let old_value = generator
-            .named_values
-            .insert(var_name.to_owned(), variable.as_basic_value());
+        let old_value = generator.named_values.insert(var_name.to_owned(), variable);
 
         body.codegen(generator)?;
         let step_value = match step {
             Some(step) => step.codegen(generator)?,
             None => generator.context.f64_type().const_float(1.0).into(),
         };
-        let next_var = generator.builder.build_float_add(
-            variable.get_incoming(0).unwrap().0.into_float_value(),
+        let cur_val = generator.builder.build_load(variable, "load");
+        let next_val = generator.builder.build_float_add(
+            cur_val.into_float_value(),
             step_value.into_float_value(),
             "nextvar",
         );
+        generator.builder.build_store(variable, next_val);
 
         let end_cond = end.codegen(generator)?;
         let end_cond = generator.builder.build_float_compare(
@@ -301,21 +313,19 @@ impl<'ctx> CodeGen<'ctx> for ForExpr {
             generator.context.f64_type().const_float(0.0),
             "loopcond",
         );
-        let loop_end_bb = generator.builder.get_insert_block().unwrap();
         let after_bb = generator.context.append_basic_block(function, "afterloop");
         generator
             .builder
             .build_conditional_branch(end_cond, loop_bb, after_bb);
         generator.builder.position_at_end(after_bb);
 
-        variable.add_incoming(&[(&next_var, loop_end_bb)]);
         if let Some(old_val) = old_value {
             generator.named_values.insert(var_name.to_owned(), old_val);
         } else {
             generator.named_values.remove(var_name);
         }
 
-        Ok(variable)
+        Ok(variable.as_any_value_enum())
     }
 }
 
@@ -328,13 +338,13 @@ impl<'ctx> CodeGen<'ctx> for Expr {
             Expr::Variable(name) => generator
                 .named_values
                 .get(name)
-                .map(|val| val.as_any_value_enum())
+                .map(|val| generator.builder.build_load(*val, name).as_any_value_enum())
                 .ok_or_else(|| format! {"Value not found: {}", name}),
             Expr::Binary(expr) => expr.codegen(generator),
             Expr::Unary(expr) => expr.codegen(generator),
             Expr::Call(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
             Expr::If(expr) => expr.codegen(generator).map(|val| val.into()),
-            Expr::For(expr) => expr.codegen(generator).map(|val| val.into()),
+            Expr::For(expr) => expr.codegen(generator),
         }
     }
 }
@@ -384,8 +394,12 @@ impl<'ctx> CodeGen<'ctx> for Function {
 
         generator.named_values = func_value
             .get_params()
-            .iter()
-            .map(|arg| (arg.get_name(), *arg))
+            .into_iter()
+            .map(|arg| {
+                let variable = generator.create_entry_block_alloca(func_value, &arg.get_name());
+                generator.builder.build_store(variable, arg);
+                (arg.get_name(), variable)
+            })
             .collect();
 
         let body = self.body.codegen(generator)?;
