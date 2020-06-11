@@ -107,29 +107,26 @@ impl<'a> Parser<'a> {
             _ => return self.format_error("Expected identifier after for"),
         };
 
-        match self.get_next_token() {
-            Some(Token::Assign) => {
-                self.get_next_token();
-            }
-            _ => return self.format_error("Exprected assignment"),
+        if let Some(Token::Assign) = self.get_next_token() {
+            self.get_next_token();
+        } else {
+            return self.format_error("Exprected assignment");
         }
 
         let start = self.parse_expression()?;
-        match self.cur_token {
-            Some(Token::Comma) => {
-                self.get_next_token();
-            }
-            _ => return self.format_error("Expected ',' after for start value"),
+        if let Some(Token::Comma) = self.cur_token {
+            self.get_next_token();
+        } else {
+            return self.format_error("Expected ',' after for start value");
         }
 
         let end = self.parse_expression()?;
 
-        let step = match self.cur_token {
-            Some(Token::Comma) => {
-                self.get_next_token();
-                Some(self.parse_expression()?)
-            }
-            _ => None,
+        let step = if let Some(Token::Comma) = self.cur_token {
+            self.get_next_token();
+            Some(self.parse_expression()?)
+        } else {
+            None
         };
 
         if let Some(Token::In) = self.cur_token {
@@ -148,19 +145,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary(&mut self) -> ParseResult<Expr> {
-        match self.cur_token {
-            Some(Token::UnknownChar(ch)) => {
-                if ch.is_ascii() {
-                    self.parse_primary()
-                } else {
-                    self.get_next_token();
-                    Ok(Expr::Unary(UnaryExpr {
-                        op: ch,
-                        operand: Box::new(self.parse_unary()?),
-                    }))
-                }
+        if let Some(Token::UnknownChar(ch)) = self.cur_token {
+            if ch.is_ascii() {
+                self.parse_primary()
+            } else {
+                self.get_next_token();
+                Ok(Expr::Unary(UnaryExpr {
+                    op: ch,
+                    operand: Box::new(self.parse_unary()?),
+                }))
             }
-            _ => self.parse_primary(),
+        } else {
+            self.parse_primary()
         }
     }
 
@@ -193,9 +189,7 @@ impl<'a> Parser<'a> {
             let op = match self.cur_token {
                 Some(Token::BinaryOp(op)) => op.into(),
                 Some(Token::UnknownChar(ch)) => AstBinaryOp::Custom(ch),
-                _ => {
-                    return Ok(lhs);
-                }
+                _ => return Ok(lhs),
             };
 
             let token_precedent = self.get_token_precedent(op);

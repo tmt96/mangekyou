@@ -84,86 +84,77 @@ impl<'ctx> CodeGen<'ctx> for BinaryExpr {
         let BinaryExpr { op, lhs, rhs } = self;
         let lhs = lhs.codegen(generator)?;
         let rhs = rhs.codegen(generator)?;
-        match (lhs, rhs) {
-            (AnyValueEnum::FloatValue(lhs), AnyValueEnum::FloatValue(rhs)) => {
-                let result = match op {
-                    AstBinaryOp::Add => {
-                        generator.builder.build_float_add(lhs, rhs, "addtmp").into()
-                    }
-                    AstBinaryOp::Sub => {
-                        generator.builder.build_float_sub(lhs, rhs, "subrmp").into()
-                    }
-                    AstBinaryOp::Mul => {
-                        generator.builder.build_float_mul(lhs, rhs, "multmp").into()
-                    }
-                    AstBinaryOp::Div => {
-                        generator.builder.build_float_div(lhs, rhs, "divtmp").into()
-                    }
-                    AstBinaryOp::Lt => {
-                        let tmp_value = generator.builder.build_float_compare(
-                            FloatPredicate::ULT,
-                            lhs,
-                            rhs,
+        if let (AnyValueEnum::FloatValue(lhs), AnyValueEnum::FloatValue(rhs)) = (lhs, rhs) {
+            let result = match op {
+                AstBinaryOp::Add => generator.builder.build_float_add(lhs, rhs, "addtmp").into(),
+                AstBinaryOp::Sub => generator.builder.build_float_sub(lhs, rhs, "subrmp").into(),
+                AstBinaryOp::Mul => generator.builder.build_float_mul(lhs, rhs, "multmp").into(),
+                AstBinaryOp::Div => generator.builder.build_float_div(lhs, rhs, "divtmp").into(),
+                AstBinaryOp::Lt => {
+                    let tmp_value = generator.builder.build_float_compare(
+                        FloatPredicate::ULT,
+                        lhs,
+                        rhs,
+                        "lttmp",
+                    );
+                    generator
+                        .builder
+                        .build_unsigned_int_to_float(
+                            tmp_value,
+                            generator.context.f64_type(),
                             "lttmp",
-                        );
-                        generator
-                            .builder
-                            .build_unsigned_int_to_float(
-                                tmp_value,
-                                generator.context.f64_type(),
-                                "lttmp",
-                            )
-                            .into()
-                    }
-                    AstBinaryOp::Gt => {
-                        let tmp_value = generator.builder.build_float_compare(
-                            FloatPredicate::UGT,
-                            lhs,
-                            rhs,
+                        )
+                        .into()
+                }
+                AstBinaryOp::Gt => {
+                    let tmp_value = generator.builder.build_float_compare(
+                        FloatPredicate::UGT,
+                        lhs,
+                        rhs,
+                        "gttmp",
+                    );
+                    generator
+                        .builder
+                        .build_unsigned_int_to_float(
+                            tmp_value,
+                            generator.context.f64_type(),
                             "gttmp",
-                        );
-                        generator
-                            .builder
-                            .build_unsigned_int_to_float(
-                                tmp_value,
-                                generator.context.f64_type(),
-                                "gttmp",
-                            )
-                            .into()
-                    }
-                    AstBinaryOp::Eq => {
-                        let tmp_value = generator.builder.build_float_compare(
-                            FloatPredicate::UEQ,
-                            lhs,
-                            rhs,
+                        )
+                        .into()
+                }
+                AstBinaryOp::Eq => {
+                    let tmp_value = generator.builder.build_float_compare(
+                        FloatPredicate::UEQ,
+                        lhs,
+                        rhs,
+                        "eqtmp",
+                    );
+                    generator
+                        .builder
+                        .build_unsigned_int_to_float(
+                            tmp_value,
+                            generator.context.f64_type(),
                             "eqtmp",
-                        );
-                        generator
-                            .builder
-                            .build_unsigned_int_to_float(
-                                tmp_value,
-                                generator.context.f64_type(),
-                                "eqtmp",
-                            )
-                            .into()
-                    }
-                    AstBinaryOp::Custom(op) => {
-                        let func = generator
-                            .module
-                            .get_function(&format!("binary{}", op))
-                            .ok_or_else(|| "Binary operator not found".to_string())?;
-                        generator
-                            .builder
-                            .build_call(func, &[lhs.into(), rhs.into()], "binop")
-                            .as_any_value_enum()
-                    }
-                };
-                Ok(result)
-            }
-            _ => Err(format!(
+                        )
+                        .into()
+                }
+                AstBinaryOp::Custom(op) => {
+                    let func = generator
+                        .module
+                        .get_function(&format!("binary{}", op))
+                        .ok_or_else(|| "Binary operator not found".to_string())?;
+                    generator
+                        .builder
+                        .build_call(func, &[lhs.into(), rhs.into()], "binop")
+                        .as_any_value_enum()
+                }
+            };
+            Ok(result)
+        } else {
+            Err(format!(
                 "Expected two number values, found {:?} and {:?}",
                 lhs, rhs
-            )),
+            ))
         }
     }
 }
@@ -318,14 +309,12 @@ impl<'ctx> CodeGen<'ctx> for ForExpr {
         generator.builder.position_at_end(after_bb);
 
         variable.add_incoming(&[(&next_var, loop_end_bb)]);
-        match old_value {
-            Some(old_val) => {
-                generator.named_values.insert(var_name.to_owned(), old_val);
-            }
-            None => {
-                generator.named_values.remove(var_name);
-            }
+        if let Some(old_val) = old_value {
+            generator.named_values.insert(var_name.to_owned(), old_val);
+        } else {
+            generator.named_values.remove(var_name);
         }
+
         Ok(variable)
     }
 }
