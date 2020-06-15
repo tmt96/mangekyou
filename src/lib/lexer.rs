@@ -70,6 +70,7 @@ impl<'a> Lexer<'a> {
             "in" => Some(Token::In),
             "binary" => Some(Token::BinaryDef),
             "unary" => Some(Token::UnaryDef),
+            "var" => Some(Token::Var),
             _ => Some(Token::Identifier(identifier)),
         }
     }

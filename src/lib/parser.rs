@@ -160,6 +160,33 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_var(&mut self) -> ParseResult<Expr> {
+        let mut var_names = vec![];
+        loop {
+            if let Some(Token::Identifier(name)) = self.get_next_token() {
+                if let Some(Token::Assign) = self.get_next_token() {
+                    self.get_next_token(); // eat '='
+                    let init = self.parse_expression()?;
+                    var_names.push((name, Box::new(init)));
+                }
+
+                if let Some(Token::Comma) = self.cur_token {
+                    break;
+                }
+            } else {
+                return Err("Expected identifier after var".to_string());
+            }
+        }
+
+        if let Some(Token::In) = self.cur_token {
+            self.get_next_token();
+            let body = Box::new(self.parse_expression()?);
+            Ok(Expr::VarDef(VarDefExpr { var_names, body }))
+        } else {
+            Err("Expected 'in' keyword after 'var'".to_string())
+        }
+    }
+
     fn parse_primary(&mut self) -> ParseResult<Expr> {
         match self.cur_token.clone() {
             Some(Token::Number(num)) => self.parse_number(num),
@@ -167,11 +194,12 @@ impl<'a> Parser<'a> {
             Some(Token::OpenParen) => self.parse_paren(),
             Some(Token::If) => self.parse_if_else(),
             Some(Token::For) => self.parse_for(),
-            None => self.format_error("No token left"),
+            Some(Token::Var) => self.parse_var(),
             Some(token) => self.format_error(&format!(
                 "Unknown token {:#?} when expecting an expression",
                 token
             )),
+            None => self.format_error("No token left"),
         }
     }
 
@@ -188,6 +216,7 @@ impl<'a> Parser<'a> {
         loop {
             let op = match self.cur_token {
                 Some(Token::BinaryOp(op)) => op.into(),
+                Some(Token::Assign) => AstBinaryOp::Assign,
                 Some(Token::UnknownChar(ch)) => AstBinaryOp::Custom(ch),
                 _ => return Ok(lhs),
             };

@@ -10,6 +10,7 @@ pub enum AstBinaryOp {
     Lt,
     Gt,
     Eq,
+    Assign,
     Custom(char),
 }
 
@@ -63,6 +64,12 @@ pub struct ForExpr {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct VarDefExpr {
+    pub var_names: Vec<(String, Box<Expr>)>,
+    pub body: Box<Expr>,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Expr {
     Number(f64),
     Variable(String),
@@ -71,6 +78,7 @@ pub enum Expr {
     Call(CallExpr),
     If(IfExpr),
     For(ForExpr),
+    VarDef(VarDefExpr),
 }
 
 #[derive(Debug, PartialEq)]

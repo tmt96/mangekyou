@@ -54,6 +54,7 @@ impl<'ctx> IRGenerator<'ctx> {
 
     fn init_op_pred_map() -> HashMap<AstBinaryOp, i32> {
         [
+            (AstBinaryOp::Assign, 2),
             (AstBinaryOp::Lt, 10),
             (AstBinaryOp::Gt, 10),
             (AstBinaryOp::Eq, 10),
@@ -98,10 +99,29 @@ impl<'ctx> CodeGen<'ctx> for BinaryExpr {
 
     fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
         let BinaryExpr { op, lhs, rhs } = self;
+
+        if let AstBinaryOp::Assign = op {
+            if let Expr::Variable(name) = lhs.as_ref() {
+                let value = rhs.codegen(generator)?;
+                let variable = generator
+                    .named_values
+                    .get(name)
+                    .ok_or_else(|| "Unknown variable name".to_string())?;
+
+                generator
+                    .builder
+                    .build_store(*variable, value.as_basic_value_enum()?);
+                return Ok(value.as_any_value_enum());
+            } else {
+                return Err("Destination of '=' must be a variable".to_string());
+            }
+        }
+
         let lhs = lhs.codegen(generator)?;
         let rhs = rhs.codegen(generator)?;
         if let (AnyValueEnum::FloatValue(lhs), AnyValueEnum::FloatValue(rhs)) = (lhs, rhs) {
             let result = match op {
+                AstBinaryOp::Assign => unreachable!(),
                 AstBinaryOp::Add => generator.builder.build_float_add(lhs, rhs, "addtmp").into(),
                 AstBinaryOp::Sub => generator.builder.build_float_sub(lhs, rhs, "subrmp").into(),
                 AstBinaryOp::Mul => generator.builder.build_float_mul(lhs, rhs, "multmp").into(),
@@ -329,6 +349,41 @@ impl<'ctx> CodeGen<'ctx> for ForExpr {
     }
 }
 
+impl<'ctx> CodeGen<'ctx> for VarDefExpr {
+    type GeneratedType = AnyValueEnum<'ctx>;
+
+    fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
+        let func = generator
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_parent()
+            .unwrap();
+        let mut old_bindings = HashMap::new();
+
+        for (name, expr) in &self.var_names {
+            let init_val = expr.codegen(generator)?;
+            let pointer_value = generator.create_entry_block_alloca(func, name);
+            generator
+                .builder
+                .build_store(pointer_value, init_val.as_basic_value_enum()?);
+
+            if let Some(val) = generator
+                .named_values
+                .insert(name.to_string(), pointer_value)
+            {
+                old_bindings.insert(name.to_string(), val);
+            }
+        }
+
+        let body = self.body.codegen(generator)?;
+        for (name, val) in old_bindings {
+            generator.named_values.insert(name, val);
+        }
+        Ok(body)
+    }
+}
+
 impl<'ctx> CodeGen<'ctx> for Expr {
     type GeneratedType = AnyValueEnum<'ctx>;
 
@@ -345,6 +400,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
             Expr::Call(expr) => expr.codegen(generator).map(|val| val.as_any_value_enum()),
             Expr::If(expr) => expr.codegen(generator).map(|val| val.into()),
             Expr::For(expr) => expr.codegen(generator),
+            Expr::VarDef(expr) => expr.codegen(generator),
         }
     }
 }
