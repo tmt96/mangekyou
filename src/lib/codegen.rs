@@ -4,11 +4,12 @@ use crate::value_utils::*;
 use inkwell::{
     builder::Builder,
     context::Context,
+    execution_engine::ExecutionEngine,
     module::{Linkage, Module},
     passes::*,
     types::*,
     values::*,
-    FloatPredicate,
+    FloatPredicate, OptimizationLevel,
 };
 use std::collections::HashMap;
 
@@ -19,6 +20,7 @@ pub struct IRGenerator<'ctx> {
     builder: Builder<'ctx>,
     module: Module<'ctx>,
     pass_manager: PassManager<FunctionValue<'ctx>>,
+    execution_engine: ExecutionEngine<'ctx>,
     named_values: HashMap<String, PointerValue<'ctx>>,
     op_precedence_map: HashMap<AstBinaryOp, i32>,
 }
@@ -27,6 +29,9 @@ impl<'ctx> IRGenerator<'ctx> {
     pub fn new(context: &'ctx Context) -> Self {
         let builder = context.create_builder();
         let module = context.create_module("jit");
+        let execution_engine = module
+            .create_jit_execution_engine(OptimizationLevel::Default)
+            .unwrap();
         let named_values = HashMap::new();
 
         let pass_manager = PassManager::create(&module);
@@ -47,6 +52,7 @@ impl<'ctx> IRGenerator<'ctx> {
             builder,
             module,
             pass_manager,
+            execution_engine,
             named_values,
             op_precedence_map: Self::init_op_pred_map(),
         }
@@ -68,9 +74,37 @@ impl<'ctx> IRGenerator<'ctx> {
         .collect()
     }
 
-    pub fn compile(&mut self, inst: &str) -> CodegenResult<Option<AnyValueEnum<'ctx>>> {
+    fn gen_ir_value(&mut self, inst: &str) -> CodegenResult<Option<FunctionValue<'ctx>>> {
         let mut parser = Parser::from_source(inst, &self.op_precedence_map);
         parser.parse()?.codegen(self)
+    }
+
+    pub fn jit_exec(&mut self, inst: &str) -> Result<GenericValue, String> {
+        let ir_value = self.gen_ir_value(inst)?;
+        match ir_value {
+            Some(func) => {
+                let val = unsafe { self.execution_engine.run_function(func, &[]) };
+                // let x = *val.as_float(&self.context.f64_type());
+                Ok(val)
+            }
+            None => Ok(self.context.f64_type().create_generic_value(0.0)),
+        }
+    }
+
+    pub fn get_context(&self) -> &'ctx Context {
+        self.context
+    }
+
+    pub fn get_module(&self) -> &Module<'ctx> {
+        &self.module
+    }
+
+    pub fn get_builder(&self) -> &Builder<'ctx> {
+        &self.builder
+    }
+
+    pub fn get_pass_manager(&self) -> &PassManager<FunctionValue<'ctx>> {
+        &self.pass_manager
     }
 
     fn create_entry_block_alloca(
@@ -88,7 +122,7 @@ impl<'ctx> IRGenerator<'ctx> {
     }
 }
 
-pub trait CodeGen<'ctx> {
+trait CodeGen<'ctx> {
     type GeneratedType;
 
     fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType>;
@@ -111,7 +145,7 @@ impl<'ctx> CodeGen<'ctx> for BinaryExpr {
                 generator
                     .builder
                     .build_store(*variable, value.as_basic_value_enum()?);
-                return Ok(value.as_any_value_enum());
+                return Ok(value);
             } else {
                 return Err("Destination of '=' must be a variable".to_string());
             }
@@ -376,11 +410,11 @@ impl<'ctx> CodeGen<'ctx> for VarDefExpr {
             }
         }
 
-        let body = self.body.codegen(generator)?;
+        let body = self.body.codegen(generator);
         for (name, val) in old_bindings {
             generator.named_values.insert(name, val);
         }
-        Ok(body)
+        body
     }
 }
 
@@ -467,6 +501,7 @@ impl<'ctx> CodeGen<'ctx> for Function {
             generator.pass_manager.run_on(&func_value);
             Ok(func_value)
         } else {
+            dbg!("error");
             unsafe {
                 func_value.delete();
             }
@@ -476,12 +511,12 @@ impl<'ctx> CodeGen<'ctx> for Function {
 }
 
 impl<'ctx> CodeGen<'ctx> for AstNode {
-    type GeneratedType = Option<AnyValueEnum<'ctx>>;
+    type GeneratedType = Option<FunctionValue<'ctx>>;
 
     fn codegen(&self, generator: &mut IRGenerator<'ctx>) -> CodegenResult<Self::GeneratedType> {
         match self {
-            AstNode::FunctionNode(func) => func.codegen(generator).map(|val| Some(val.into())),
-            AstNode::PrototypeNode(func) => func.codegen(generator).map(|val| Some(val.into())),
+            AstNode::FunctionNode(func) => func.codegen(generator).map(Some),
+            AstNode::PrototypeNode(func) => func.codegen(generator).map(Some),
             _ => Ok(None),
         }
     }

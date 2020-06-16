@@ -2,7 +2,7 @@ use crate::codegen::*;
 use inkwell::context::Context;
 use std::io::{stdin, stdout, Result, Write};
 
-pub fn run() -> Result<()> {
+pub fn run_repl() -> Result<()> {
     let context = Context::create();
 
     let mut generator = IRGenerator::new(&context);
@@ -21,8 +21,8 @@ pub fn run() -> Result<()> {
             break;
         }
 
-        match generator.compile(&input) {
-            Ok(ir_values) => println!("IR: {:#?}", ir_values),
+        match generator.jit_exec(&input) {
+            Ok(val) => println!("{:#?}", val),
             Err(message) => eprintln!("{}", message),
         }
     }
